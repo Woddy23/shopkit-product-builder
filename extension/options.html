@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Shopkit Product Builder Options</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <main class="options">
+    <h1>Shopkit Product Builder</h1>
+    <p class="note">API key is stored locally with chrome.storage.local. Local storage is not an encrypted secrets vault.</p>
+
+    <label class="field">
+      <span>OpenAI API Key</span>
+      <input id="api-key" type="password" placeholder="sk-..." autocomplete="off" />
+    </label>
+
+    <label class="field">
+      <span>Model</span>
+      <input id="model" type="text" placeholder="gpt-5.6-luna" value="gpt-5.6-luna" />
+    </label>
+
+    <div class="actions">
+      <button id="save" type="button">Save</button>
+      <span id="status" class="status" aria-live="polite"></span>
+    </div>
+  </main>
+
+  <script src="options.js"></script>
+</body>
+</html>

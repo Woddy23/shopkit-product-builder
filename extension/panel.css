@@ -1,0 +1,63 @@
+#ai-product-builder-toggle,
+.aipb-inline-generate {
+  appearance: none;
+  border: 1px solid #2563eb;
+  background: #2563eb;
+  color: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.aipb-review-highlight {
+  outline: 3px solid #f59e0b !important;
+  outline-offset: 2px;
+}
+
+#ai-product-builder-toggle:hover,
+.aipb-inline-generate:hover {
+  background: #1d4ed8;
+  border-color: #1d4ed8;
+}
+
+#ai-product-builder-toggle:focus-visible,
+.aipb-inline-generate:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.3);
+  outline-offset: 2px;
+}
+
+#ai-product-builder-toggle {
+  position: fixed;
+  left: 24px;
+  right: auto;
+  bottom: 24px;
+  z-index: 2147483646;
+  padding: 10px 15px;
+  border-radius: 999px;
+  font-size: 13px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.2);
+}
+
+.aipb-inline-generate {
+  margin: 8px 0 0 8px;
+  padding: 7px 11px;
+  border-radius: 8px;
+  font-size: 12px;
+  vertical-align: middle;
+}
+
+@media (max-width: 520px) {
+  #ai-product-builder-toggle {
+    left: 16px;
+    right: auto;
+    bottom: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #ai-product-builder-toggle,
+  .aipb-inline-generate {
+    scroll-behavior: auto;
+  }
+}
