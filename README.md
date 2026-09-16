@@ -4,13 +4,17 @@ Create a Portuguese product draft from a Shopkit product title. Review it, apply
 
 > Experimental Chrome extension. Test with a non-production product first. It never saves or publishes products automatically.
 
+![Shopkit Product Builder assistant inside Shopkit](Demo-shopkit.jpg)
+
+*Portuguese assistant panel shown beside the Shopkit product form. Product data in screenshot is for demonstration.*
+
 ## Download
 
 [Download Shopkit Product Builder v1.0.0](https://github.com/Woddy23/shopkit-product-builder/releases/download/v1.0.0/shopkit-product-builder-v1.0.0.zip)
 
 ## Demo
 
-Sanitized screenshot and walkthrough video coming soon.
+Screenshot included above. Walkthrough video coming soon.
 
 ## Install
 
@@ -40,6 +44,15 @@ https://YOUR-STORE.shopk.it/admin/products/create
 
 **Generate** only creates preview. **Apply** writes reviewed fields. Neither action saves, publishes, changes price, changes tax/status, or changes promotion flags.
 
+## Important Features
+
+- Generate Portuguese product content from a title.
+- Review and edit draft before any Shopkit field changes.
+- Apply matched categories, brands, tags, weight, identifiers, SEO, and handle.
+- Keep price, tax, status, and promotion settings untouched.
+- Search media without selecting or saving files automatically.
+- Store OpenAI key locally and keep it out of the repository.
+
 ## What It Handles
 
 | Generates and applies | Always manual |
@@ -57,7 +70,7 @@ AI can be wrong. Check factual claims, barcode, reference, weight, and generated
 2. Check [API billing and limits](https://platform.openai.com/settings/organization/limits). ChatGPT subscription and API billing are separate.
 3. In extension Options, paste key and keep recommended model `gpt-5.6-luna`.
 
-Key is stored locally in this Chrome profile and used by extension service worker. It is not encrypted secret storage. Use spending limits, do not share it, and remove it in Options with **Apagar chave guardada** if needed.
+Key is stored locally in this Chrome profile and used by extension service worker. `Chave guardada` only means the extension found a saved key; it does not test credits, billing, project limits, or model access. It is not encrypted secret storage. Use spending limits, do not share it, and remove it in Options with **Apagar chave guardada** if needed.
 
 Other models can be entered, but `gpt-5.6-luna` is tested and recommended.
 
@@ -80,6 +93,9 @@ No all-sites access, cookies, history, downloads, or Shopkit authentication toke
 | HTTP 401 | Key is invalid or revoked |
 | HTTP 400 | Model unsupported; try `gpt-5.6-luna` |
 | HTTP 429 | API credits, spending limit, or rate limit |
+| `insufficient_quota` / `billing_hard_limit_reached` | Add API credits or increase the OpenAI project/organisation limit |
+| `rate_limit_exceeded` | Wait briefly, then try again |
+| `model_not_found` | Use `gpt-5.6-luna` or choose a model available to your OpenAI project |
 | Form field did not update | Shopkit editor/widget changed; update field manually |
 
 Report reproducible installation or integration issues through [GitHub Issues](https://github.com/Woddy23/shopkit-product-builder/issues). Never include keys, cookies, private product data, or screenshots with client details.
