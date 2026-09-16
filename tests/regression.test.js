@@ -107,6 +107,10 @@ assert.match(source, /inlineBtn\.disabled\s*=\s*isGenerating\s*\|\|\s*!isConfigR
 assert.match(source, /if \(isGenerating \|\| !isConfigReady\) return;/);
 assert.match(source, /Generation failed: \$\{details\.log\}/);
 assert.match(source, /status === 401[\s\S]*status === 400[\s\S]*status === 429[\s\S]*AbortError[\s\S]*NetworkError/);
+assert.match(source, /Créditos ou limite mensal da API esgotados/);
+assert.match(source, /rate_limit_exceeded/);
+assert.match(source, /model_not_found/);
+assert.match(source, /JSON\.stringify\(details\.diagnostic\)/);
 assert.match(panelCss, /#ai-product-builder-toggle\s*\{[\s\S]*left:\s*24px;[\s\S]*bottom:\s*24px;/);
 assert.match(panelCss, /@media \(max-width: 520px\)[\s\S]*left:\s*16px;[\s\S]*bottom:\s*16px;/);
 
@@ -114,7 +118,7 @@ assert.match(panelCss, /@media \(max-width: 520px\)[\s\S]*left:\s*16px;[\s\S]*bo
   [new Error('API key not configured'), 'missing API key', 'Configure a API key nas opções da extensão.'],
   [Object.assign(new Error(), { status: 401, apiError: { code: 'invalid_api_key' } }), 'HTTP 401 [invalid_api_key]', 'A API key não foi aceite. Verifique a configuração.'],
   [Object.assign(new Error(), { status: 400, apiError: { param: 'text.format.schema', code: 'invalid_value', type: 'invalid_request_error', message: 'Schema is invalid' } }), 'HTTP 400 | param: text.format.schema | code: invalid_value | type: invalid_request_error | message: Schema is invalid', 'O pedido à API não é válido. Verifique a configuração do modelo.'],
-  [Object.assign(new Error(), { status: 429, apiError: { code: 'insufficient_quota' } }), 'HTTP 429 [insufficient_quota]', 'Limite ou créditos da API indisponíveis.'],
+  [Object.assign(new Error(), { status: 429, apiError: { code: 'insufficient_quota' } }), 'HTTP 429 [insufficient_quota]', 'Créditos ou limite mensal da API esgotados. Verifique faturação, créditos e limites do projeto OpenAI.'],
   [Object.assign(new Error(), { name: 'AbortError' }), 'timeout', 'A geração demorou demasiado tempo. Tente novamente.'],
   [Object.assign(new Error(), { name: 'NetworkError' }), 'network failure', 'Não foi possível contactar a API. Verifique a ligação de rede e tente novamente.'],
   [new Error('private data must not appear'), 'unexpected error', 'Não foi possível gerar o rascunho. Tente novamente.']

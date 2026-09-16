@@ -180,6 +180,13 @@
       return { log: `HTTP 401${diagnostic.code ? ` [${diagnostic.code}]` : ''}`, diagnostic, message: 'A API key não foi aceite. Verifique a configuração.' };
     }
     if (status === 400) {
+      if (diagnostic.code === 'model_not_found') {
+        return {
+          log: `HTTP 400 [model_not_found]${diagnostic.message ? ` | message: ${diagnostic.message}` : ''}`,
+          diagnostic,
+          message: 'Modelo não disponível nesta conta. Use gpt-5.6-luna ou confirme o ID do modelo na sua conta OpenAI.'
+        };
+      }
       return {
         log: `HTTP 400${diagnostic.param ? ` | param: ${diagnostic.param}` : ''}${diagnostic.code ? ` | code: ${diagnostic.code}` : ''}${diagnostic.type ? ` | type: ${diagnostic.type}` : ''}${diagnostic.message ? ` | message: ${diagnostic.message}` : ''}`,
         diagnostic,
@@ -187,7 +194,26 @@
       };
     }
     if (status === 429) {
-      return { log: `HTTP 429${diagnostic.code ? ` [${diagnostic.code}]` : ''}`, diagnostic, message: 'Limite ou créditos da API indisponíveis.' };
+      const quotaCodes = new Set(['insufficient_quota', 'billing_hard_limit_reached']);
+      if (quotaCodes.has(diagnostic.code)) {
+        return {
+          log: `HTTP 429 [${diagnostic.code}]`,
+          diagnostic,
+          message: 'Créditos ou limite mensal da API esgotados. Verifique faturação, créditos e limites do projeto OpenAI.'
+        };
+      }
+      if (diagnostic.code === 'rate_limit_exceeded') {
+        return {
+          log: 'HTTP 429 [rate_limit_exceeded]',
+          diagnostic,
+          message: 'Limite temporário de pedidos atingido. Aguarde alguns segundos e tente novamente.'
+        };
+      }
+      return {
+        log: `HTTP 429${diagnostic.code ? ` [${diagnostic.code}]` : ''}`,
+        diagnostic,
+        message: 'A API recusou o pedido por limite de utilização. Verifique créditos, limites e tente novamente.'
+      };
     }
     if (error?.name === 'AbortError') return { log: 'timeout', diagnostic, message: 'A geração demorou demasiado tempo. Tente novamente.' };
     if (error?.name === 'NetworkError') return { log: 'network failure', diagnostic, message: 'Não foi possível contactar a API. Verifique a ligação de rede e tente novamente.' };
@@ -1280,7 +1306,7 @@ Schema:
     } catch (error) {
       const details = getGenerationErrorDetails(error);
       if (details.diagnostic?.status) {
-        console.error('[AIPB] OpenAI request failed', details.diagnostic);
+        console.error('[AIPB] OpenAI request failed', JSON.stringify(details.diagnostic));
       } else {
         console.error(`[AIPB] Generation failed: ${details.log}`);
       }
@@ -1423,7 +1449,7 @@ Schema:
       generateBtn.disabled = true;
       if (optionsBtn) optionsBtn.hidden = false;
     } else {
-      warning.textContent = `Configuração pronta · Modelo: ${config.model}`;
+      warning.textContent = `Chave guardada · Modelo: ${config.model}`;
       warning.className = 'config-status ready';
       generateBtn.disabled = isGenerating;
       if (optionsBtn) optionsBtn.hidden = true;
