@@ -19,4 +19,6 @@ jobs:
           node-version: 22
       - run: node --check extension/content.js
       - run: node --check extension/options.js
+      - run: node --check extension/background.js
+      - run: node tests/validate-manifest.js
       - run: node tests/regression.test.js

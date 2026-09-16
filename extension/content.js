@@ -1,11 +1,6 @@
 (function() {
   'use strict';
 
-  // Strict runtime URL guard
-  if (location.origin !== 'https://example-store.shopk.it' || location.pathname !== '/admin/products/create') {
-    return;
-  }
-
   // Track needs review items
   let needsReview = [];
   const draftState = {
@@ -47,31 +42,45 @@
   let generatedDraftTitleKey = '';
 
   const MODEL_DEFAULT = 'gpt-5.6-luna';
-  const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
-  const PRODUCT_DRAFT_SCHEMA = {
+  const productDraftSchema = {
     type: 'object',
     additionalProperties: false,
     properties: {
-      language: { type: 'string' }, titulo: { type: 'string' }, excerpt: { type: 'string' },
+      language: { type: 'string' },
+      titulo: { type: 'string', minLength: 1 },
+      excerpt: { type: 'string', maxLength: 200 },
       descricao_html: { type: 'string' },
       marca_text: { anyOf: [{ type: 'string' }, { type: 'null' }] },
-      categorias_text: { type: 'array', items: { type: 'string' } },
-      tags_text: { type: 'array', items: { type: 'string' } },
-      peso: { anyOf: [{ type: 'number' }, { type: 'null' }] },
-      barcode: { anyOf: [{ type: 'string' }, { type: 'null' }] },
-      referencia: { anyOf: [{ type: 'string' }, { type: 'null' }] },
-      handle: { anyOf: [{ type: 'string' }, { type: 'null' }] },
-      seo: { type: 'object', additionalProperties: false, properties: {
-        product_page_title: { type: 'string' }, product_meta_description: { type: 'string' }, product_meta_tags: { type: 'string' }
-      }, required: ['product_page_title', 'product_meta_description', 'product_meta_tags'] },
-      media: { type: 'object', additionalProperties: false, properties: {
-        attach_existing_by_search: { type: 'array', items: { type: 'string' } }
-      }, required: ['attach_existing_by_search'] },
-      supplier_url_suggestions: { type: 'object', additionalProperties: false, properties: {
-        official: { type: 'array', items: { type: 'string' } }, suppliers: { type: 'array', items: { type: 'string' } }
-      }, required: ['official', 'suppliers'] },
-      missing_fields: { type: 'array', items: { type: 'string' } },
-      notes_for_user: { type: 'array', items: { type: 'string' } }
+      categorias_text: { type: 'array', items: { type: 'string' }, maxItems: 30 },
+      tags_text: { type: 'array', items: { type: 'string' }, maxItems: 30 },
+      peso: { anyOf: [{ type: 'number', minimum: 0, maximum: 1000000 }, { type: 'null' }] },
+      barcode: { anyOf: [{ type: 'string', maxLength: 255 }, { type: 'null' }] },
+      referencia: { anyOf: [{ type: 'string', maxLength: 255 }, { type: 'null' }] },
+      handle: { anyOf: [{ type: 'string', maxLength: 255 }, { type: 'null' }] },
+      seo: {
+        type: 'object', additionalProperties: false,
+        properties: {
+          product_page_title: { type: 'string', maxLength: 255 },
+          product_meta_description: { type: 'string', maxLength: 255 },
+          product_meta_tags: { type: 'string', maxLength: 255 }
+        },
+        required: ['product_page_title', 'product_meta_description', 'product_meta_tags']
+      },
+      media: {
+        type: 'object', additionalProperties: false,
+        properties: { attach_existing_by_search: { type: 'array', items: { type: 'string', maxLength: 100 }, maxItems: 8 } },
+        required: ['attach_existing_by_search']
+      },
+      supplier_url_suggestions: {
+        type: 'object', additionalProperties: false,
+        properties: {
+          official: { type: 'array', items: { type: 'string', maxLength: 500 }, maxItems: 3 },
+          suppliers: { type: 'array', items: { type: 'string', maxLength: 500 }, maxItems: 3 }
+        },
+        required: ['official', 'suppliers']
+      },
+      missing_fields: { type: 'array', items: { type: 'string', maxLength: 100 }, maxItems: 30 },
+      notes_for_user: { type: 'array', items: { type: 'string', maxLength: 300 }, maxItems: 30 }
     },
     required: ['language', 'titulo', 'excerpt', 'descricao_html', 'marca_text', 'categorias_text', 'tags_text', 'peso', 'barcode', 'referencia', 'handle', 'seo', 'media', 'supplier_url_suggestions', 'missing_fields', 'notes_for_user']
   };
@@ -269,10 +278,16 @@
   }
 
   async function getConfig() {
-    const { apiKey = '', model = MODEL_DEFAULT } = await chrome.storage.local.get(['apiKey', 'model']);
-    const trimmedApiKey = (apiKey || '').trim();
-    const trimmedModel = (model || '').trim();
-    return { apiKey: trimmedApiKey, model: trimmedModel || MODEL_DEFAULT };
+    const config = await new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({ type: 'get-config' }, response => {
+        if (chrome.runtime.lastError) {
+          reject(chrome.runtime.lastError);
+          return;
+        }
+        resolve(response || { ready: false, model: MODEL_DEFAULT });
+      });
+    });
+    return { apiKey: config.ready ? 'configured' : '', model: config.model || MODEL_DEFAULT };
   }
 
   function sanitizeText(value) {
@@ -483,11 +498,10 @@
   }
 
   function parseWeightFromTitle(title) {
-    // Patterns: "500ml", "200 g", "1L", "6x13ml", "100g", "250ml"
-    // Now using global flag (g) to find ALL matches, not just first
+    // Supports decimal dot/comma values without matching a suffix of the number.
     const patterns = [
-      /(\d+)\s*x\s*(\d+)\s*(ml|g|l)/gi,  // multipack: "6x13ml"
-      /(\d+)\s*(ml|g|l|gramas?|litros?)/gi // simple: "500ml", "1 litro"
+      /(?<![\d.,])(\d+(?:[.,]\d+)?)\s*x\s*(\d+(?:[.,]\d+)?)\s*(ml|g|l)\b/gi,
+      /(?<![\d.,])(\d+(?:[.,]\d+)?)\s*(ml|g|l|gramas?|litros?)\b/gi
     ];
 
     let totalGrams = 0;
@@ -514,13 +528,13 @@
 
         let grams;
         if (match[3]) { // multipack pattern has 3 capture groups
-          const count = parseInt(match[1]);
-          const amount = parseInt(match[2]);
+          const count = Number(match[1].replace(',', '.'));
+          const amount = Number(match[2].replace(',', '.'));
           const unit = match[3].toLowerCase();
           const unitGrams = unit === 'ml' ? 1 : (unit === 'g' ? 1 : 1000);
           grams = count * amount * unitGrams;
         } else { // simple pattern has 2 capture groups
-          const amount = parseInt(match[1]);
+          const amount = Number(match[1].replace(',', '.'));
           const unit = match[2].toLowerCase();
           grams = unit === 'ml' || unit === 'g' || unit.startsWith('gram') ? amount : amount * 1000;
         }
@@ -548,33 +562,6 @@
     const confidence = brand && (!isKit) ? 'HIGH' : 'LOW';
 
     return { brand, category, tags, confidence, reasons, isKit };
-  }
-
-  async function getSupplierPreferences(brandKey) {
-    return new Promise(resolve => {
-      chrome.storage.local.get(['supplierUrlPreferences'], result => {
-        const prefs = result.supplierUrlPreferences || {};
-        resolve(prefs[brandKey] || { official: [], suppliers: [], counts: {}, lastUsed: null });
-      });
-    });
-  }
-
-  async function updateSupplierPreference(brandKey, url, group) {
-    return new Promise(resolve => {
-      chrome.storage.local.get(['supplierUrlPreferences'], result => {
-        const prefs = result.supplierUrlPreferences || {};
-        if (!prefs[brandKey]) {
-          prefs[brandKey] = { official: [], suppliers: [], counts: {}, lastUsed: null };
-        }
-        const brandPrefs = prefs[brandKey];
-
-        const key = `${group}:${url}`;
-        brandPrefs.counts[key] = (brandPrefs.counts[key] || 0) + 1;
-        brandPrefs.lastUsed = new Date().toISOString();
-
-        chrome.storage.local.set({ supplierUrlPreferences: prefs }, resolve);
-      });
-    });
   }
 
   function mapOptions(options) {
@@ -676,7 +663,10 @@
   }
 
   function validateAgainstOptions(draft) {
-    const missing = [];
+    const modelMissing = Array.isArray(draft.missing_fields)
+      ? draft.missing_fields.map(sanitizeText).filter(Boolean)
+      : [];
+    const missing = [...modelMissing];
 
     // Fuzzy match for brand
     if (draft.marca_text) {
@@ -737,164 +727,66 @@
       missing.push('tags');
     }
 
-    draft.missing_fields = missing;
+    draft.missing_fields = Array.from(new Set(missing));
   }
 
   function validateDraftShape(draft) {
     if (!draft || typeof draft !== 'object' || Array.isArray(draft)) throw new Error('Model response did not contain a product draft.');
+    if (draft.language !== 'pt-PT') throw new Error('Model response contained an unsupported language.');
     if (['titulo', 'excerpt', 'descricao_html'].some(field => typeof draft[field] !== 'string')) throw new Error('Model response contained invalid product text fields.');
+    if (!draft.titulo.trim() || draft.titulo.length > 255 || draft.excerpt.length > 200 || draft.descricao_html.length > 50000) throw new Error('Model response contained oversized product text.');
+    if (draft.marca_text !== null && typeof draft.marca_text !== 'string') throw new Error('Model response contained invalid brand.');
     if (!Array.isArray(draft.categorias_text) || !Array.isArray(draft.tags_text)) throw new Error('Model response contained invalid category or tag fields.');
     if (!draft.seo || typeof draft.seo !== 'object' || ['product_page_title', 'product_meta_description', 'product_meta_tags'].some(field => typeof draft.seo[field] !== 'string')) throw new Error('Model response contained invalid SEO fields.');
+    if (draft.peso !== null && (typeof draft.peso !== 'number' || !Number.isFinite(draft.peso) || draft.peso < 0 || draft.peso > 1000000)) throw new Error('Model response contained invalid weight.');
+    for (const field of ['barcode', 'referencia', 'handle']) {
+      if (draft[field] !== null && typeof draft[field] !== 'string') throw new Error(`Model response contained invalid ${field}.`);
+      if (typeof draft[field] === 'string' && draft[field].length > 255) throw new Error(`Model response contained oversized ${field}.`);
+    }
+    for (const field of ['categorias_text', 'tags_text']) {
+      if (draft[field].length > 30 || draft[field].some(value => typeof value !== 'string' || value.length > 100)) throw new Error(`Model response contained invalid ${field}.`);
+    }
+    if (!draft.media || !Array.isArray(draft.media.attach_existing_by_search) || draft.media.attach_existing_by_search.length > 8 || draft.media.attach_existing_by_search.some(value => typeof value !== 'string' || value.length > 100)) throw new Error('Model response contained invalid media suggestions.');
+    if (!draft.supplier_url_suggestions || !Array.isArray(draft.supplier_url_suggestions.official) || !Array.isArray(draft.supplier_url_suggestions.suppliers)) throw new Error('Model response contained invalid supplier suggestions.');
+    if (draft.supplier_url_suggestions.official.length > 3 || draft.supplier_url_suggestions.suppliers.length > 3) throw new Error('Model response contained too many supplier URLs.');
+    if ([...draft.supplier_url_suggestions.official, ...draft.supplier_url_suggestions.suppliers].some(value => typeof value !== 'string' || value.length > 500)) throw new Error('Model response contained invalid supplier URLs.');
+    for (const url of [...draft.supplier_url_suggestions.official, ...draft.supplier_url_suggestions.suppliers]) {
+      try {
+        if (new URL(url).protocol !== 'https:') throw new Error('unsupported protocol');
+      } catch (_) {
+        throw new Error('Model response contained an invalid supplier URL.');
+      }
+    }
+    if (!Array.isArray(draft.missing_fields) || draft.missing_fields.length > 30 || draft.missing_fields.some(value => typeof value !== 'string' || value.length > 100)) throw new Error('Model response contained invalid missing fields.');
+    if (!Array.isArray(draft.notes_for_user) || draft.notes_for_user.length > 30 || draft.notes_for_user.some(value => typeof value !== 'string' || value.length > 300)) throw new Error('Model response contained invalid review notes.');
     return draft;
   }
 
-  function shouldIncludeTemperature(model) {
-    const m = (model || '').trim().toLowerCase();
-    if (m.startsWith('gpt-5')) return false;
-    return true;
-  }
-
   function parseModelResponse(text) {
-    let cleaned = (text || '').replace(/```json|```/g, '').trim();
+    const cleaned = String(text || '').trim();
 
-    // Log the first characters for debugging
-
-    // Remove BOM if present
-    cleaned = cleaned.replace(/^\uFEFF/, '');
-
-    // Fix invalid escape sequences that cause JSON parsing errors
-    // Only escape newlines/tabs that are inside JSON strings (between quotes)
-    let inString = false;
-    let escaped = false;
-    let result = '';
-
-    for (let i = 0; i < cleaned.length; i++) {
-      const char = cleaned[i];
-      const prev = cleaned[i - 1];
-
-      if (!inString) {
-        // Outside string: keep structural characters as-is
-        if (char === '"' && prev !== '\\') {
-          inString = true;
-        }
-        result += char;
-      } else {
-        // Inside string: need to handle escapes
-        if (escaped) {
-          // Previous char was backslash, this is escaped
-          result += char;
-          escaped = false;
-        } else if (char === '\\') {
-          // Start escape sequence
-          result += char;
-          escaped = true;
-        } else if (char === '"') {
-          // End of string
-          result += char;
-          inString = false;
-        } else if (char === '\n') {
-          // Escape literal newlines inside strings
-          result += '\\n';
-        } else if (char === '\t') {
-          // Escape literal tabs inside strings
-          result += '\\t';
-        } else if (char === '\r') {
-          // Remove carriage returns
-        } else if (/[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f-\x9f]/.test(char)) {
-          // Remove other control characters
-        } else {
-          result += char;
-        }
-      }
-    }
-
-    cleaned = result;
-
-    // Fix incomplete hex escapes outside of our processing
-    cleaned = cleaned.replace(/\\x(?![0-9a-fA-F]{2})/g, '');
-
-
-    // Helper to fix common JSON truncation issues
-    function attemptJSONRepair(jsonStr) {
-      let repaired = jsonStr;
-
-      // Fix truncated arrays (missing closing bracket)
-      const openBrackets = (repaired.match(/\[/g) || []).length;
-      const closeBrackets = (repaired.match(/\]/g) || []).length;
-      if (openBrackets > closeBrackets) {
-        repaired += ']'.repeat(openBrackets - closeBrackets);
-      }
-
-      // Fix truncated objects (missing closing brace)
-      const openBraces = (repaired.match(/\{/g) || []).length;
-      const closeBraces = (repaired.match(/\}/g) || []).length;
-      if (openBraces > closeBraces) {
-        repaired += '}'.repeat(openBraces - closeBraces);
-      }
-
-      // Fix trailing commas before closing brackets/braces
-      repaired = repaired.replace(/,\s*([}\]])/g, '$1');
-
-      // Fix incomplete string at end
-      const lastQuote = repaired.lastIndexOf('"');
-      const lastNewline = repaired.lastIndexOf('\n');
-      const lastColon = repaired.lastIndexOf(':');
-      if (lastQuote > lastColon && lastQuote > lastNewline) {
-        // Likely have an unclosed string
-        const openQuotes = (repaired.match(/"/g) || []).length;
-        if (openQuotes % 2 !== 0) {
-          repaired += '"';
-        }
-      }
-
-      return repaired;
-    }
-
-    // Try parsing as-is first
+    if (cleaned.startsWith('\uFEFF')) throw new Error('Model response was malformed or truncated. No data was applied.');
     try {
       return JSON.parse(cleaned);
-    } catch (error) {
-
-      // Try extracting JSON from first { to last }
-      const firstBrace = cleaned.indexOf('{');
-      const lastBrace = cleaned.lastIndexOf('}');
-      if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-        const extracted = cleaned.substring(firstBrace, lastBrace + 1);
-        try {
-          return JSON.parse(extracted);
-        } catch (extractError) {
-          // Try repairing the extracted JSON
-          const repaired = attemptJSONRepair(extracted);
-          try {
-            return JSON.parse(repaired);
-          } catch (repairError) {
-          }
-        }
-      }
-
-      // Aggressive repair: try to complete the JSON structure
-      const aggressivelyRepaired = attemptJSONRepair(cleaned);
-      try {
-        return JSON.parse(aggressivelyRepaired);
-      } catch (aggressiveError) {
-        throw new Error('Model response was malformed or truncated. No data was applied.');
-      }
+    } catch (_) {
+      throw new Error('Model response was malformed or truncated. No data was applied.');
     }
   }
 
   async function generateDraft({ titulo, marcaHint, categoriaHint, notes, supplierUrl, preselectedBrand, preselectedCategory, preselectedTags }) {
-    const { apiKey, model } = await getConfig();
-    if (!apiKey) {
+    const { ready, model } = await new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({ type: 'get-config' }, response => {
+        if (chrome.runtime.lastError) reject(chrome.runtime.lastError);
+        else resolve(response || { ready: false, model: MODEL_DEFAULT });
+      });
+    });
+    if (!ready) {
       throw new Error('API key not configured');
     }
 
     if (!discoveredOptions.categories?.length || !discoveredOptions.brands?.length) {
       await discoverStoreOptions();
     }
-
-    const categoriesList = preselectedCategory ? [preselectedCategory] : [];
-    const brandsList = preselectedBrand ? [preselectedBrand] : [];
-    const tagsList = (preselectedTags && preselectedTags.length) ? preselectedTags : [];
 
     const prompt = `Gera um JSON estrito para rascunho de produto.
 
@@ -1034,278 +926,23 @@ Schema:
   "notes_for_user": string[]
 }`;
 
-    const productDraftSchema = {
-      type: 'object',
-      properties: {
-        language: { type: 'string' },
-        titulo: { type: 'string' },
-        excerpt: { type: 'string' },
-        descricao_html: { type: 'string' },
-        marca_text: { anyOf: [{ type: 'string' }, { type: 'null' }] },
-        categorias_text: { type: 'array', items: { type: 'string' } },
-        tags_text: { type: 'array', items: { type: 'string' } },
-        peso: { anyOf: [{ type: 'number' }, { type: 'null' }] },
-        barcode: { anyOf: [{ type: 'string' }, { type: 'null' }] },
-        referencia: { anyOf: [{ type: 'string' }, { type: 'null' }] },
-        handle: { anyOf: [{ type: 'string' }, { type: 'null' }] },
-        seo: {
-          type: 'object',
-          properties: {
-            product_page_title: { type: 'string' },
-            product_meta_description: { type: 'string' },
-            product_meta_tags: { type: 'string' }
-          },
-          required: ['product_page_title', 'product_meta_description', 'product_meta_tags'],
-          additionalProperties: false
-        },
-        media: {
-          type: 'object',
-          properties: {
-            attach_existing_by_search: { type: 'array', items: { type: 'string' } }
-          },
-          required: ['attach_existing_by_search'],
-          additionalProperties: false
-        },
-        supplier_url_suggestions: {
-          type: 'object',
-          properties: {
-            official: { type: 'array', items: { type: 'string' } },
-            suppliers: { type: 'array', items: { type: 'string' } }
-          },
-          required: ['official', 'suppliers'],
-          additionalProperties: false
-        },
-        missing_fields: { type: 'array', items: { type: 'string' } },
-        notes_for_user: { type: 'array', items: { type: 'string' } }
-      },
-      required: [
-        'language', 'titulo', 'excerpt', 'descricao_html', 'marca_text',
-        'categorias_text', 'tags_text', 'peso', 'barcode', 'referencia', 'handle',
-        'seo', 'media', 'supplier_url_suggestions', 'missing_fields', 'notes_for_user'
-      ],
-      additionalProperties: false
-    };
-
-    const normModel = (model || '').trim().toLowerCase();
-    const isGpt5 = normModel.startsWith('gpt-5');
-    const apiMode = isGpt5 ? 'responses' : 'chat_completions';
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000);
-
-    let requestBody;
-    let apiUrl;
-
-    if (isGpt5) {
-      apiUrl = 'https://api.openai.com/v1/responses';
-      requestBody = {
-        model,
-        input: prompt,
-        max_output_tokens: 6000,
-        reasoning: { effort: 'none' },
-        store: false,
-        text: {
-          format: {
-            type: 'json_schema',
-            name: 'shopkit_product_draft',
-            strict: true,
-            schema: productDraftSchema
-          }
-        }
-      };
-    } else {
-      apiUrl = OPENAI_URL;
-      requestBody = {
-        model,
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: 3500,
-        response_format: { type: 'json_object' }
-      };
-      if (shouldIncludeTemperature(model)) {
-        requestBody.temperature = 0.2;
-      }
+    const schema = productDraftSchema;
+    const response = await new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({ type: 'generate-draft', prompt, model, schema }, result => {
+        if (chrome.runtime.lastError) reject(chrome.runtime.lastError);
+        else resolve(result || { ok: false, error: { message: 'No response from extension worker.' } });
+      });
+    });
+    if (!response.ok) {
+      const error = Object.assign(new Error(response.error?.message || 'OpenAI request failed.'), response);
+      error.status = response.status;
+      error.apiError = response.apiError;
+      error.name = response.error?.name || error.name;
+      throw error;
     }
 
-    try {
-      let response;
-      try {
-        response = await fetch(apiUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${apiKey}`
-          },
-          body: JSON.stringify(requestBody),
-          signal: controller.signal
-        });
-      } catch (error) {
-        if (error?.name === 'AbortError') throw error;
-        const networkError = new Error('OpenAI network request failed.');
-        networkError.name = 'NetworkError';
-        throw networkError;
-      }
-      clearTimeout(timeoutId);
-
-
-      if (!response.ok) {
-        let apiError = null;
-        try {
-          const errBody = await response.json();
-          apiError = errBody?.error || null;
-        } catch (_) {
-          try {
-            const rawErrText = await response.text();
-            if (rawErrText) apiError = { message: rawErrText.slice(0, 200) };
-          } catch (__) {}
-        }
-        const requestError = Object.assign(
-          new Error(`OpenAI request failed (${response.status}).`),
-          { status: response.status, apiError }
-        );
-        throw requestError;
-      }
-
-      const rawBody = await response.text();
-
-      if (!rawBody) {
-        throw new Error('Empty HTTP body from OpenAI');
-      }
-
-      let result;
-      try {
-        result = JSON.parse(rawBody);
-      } catch (e) {
-        throw e;
-      }
-
-
-      let rawText = '';
-
-      if (isGpt5) {
-        const outputArr = Array.isArray(result?.output) ? result.output : [];
-        const msg = outputArr.find(o => o?.type === 'message' && o?.role === 'assistant');
-        if (msg && Array.isArray(msg?.content)) {
-          rawText = msg.content
-            .map((c) => {
-              if (typeof c === 'string') return c;
-              if (c && typeof c === 'object') {
-                if (typeof c.text === 'string') return c.text;
-                if (c.text && typeof c.text === 'object' && typeof c.text.value === 'string') return c.text.value;
-                if (typeof c.content === 'string') return c.content;
-              }
-              return '';
-            })
-            .join('')
-            .trim();
-        }
-        // Fallback: some Responses shapes can include output_text items directly in result.output
-        if (!rawText && outputArr.length) {
-          rawText = outputArr
-            .map((o) => {
-              if (o?.type === 'output_text' && typeof o.text === 'string') return o.text;
-              if (typeof o?.text === 'string') return o.text;
-              return '';
-            })
-            .join('')
-            .trim();
-        }
-      } else {
-        const choice = result?.choices?.[0];
-
-        if (choice?.finish_reason === 'length') {
-          throw new Error('Model output truncated (finish_reason=length). Increase token limit or reduce descricao_html size.');
-        }
-
-        if (choice?.message?.refusal) {
-          throw new Error(`Model refusal: ${choice.message.refusal.slice(0, 200)}`);
-        }
-
-        if (typeof choice?.message?.content === 'string') {
-          rawText = choice.message.content.trim();
-        } else if (Array.isArray(choice?.message?.content)) {
-          rawText = choice.message.content
-            .map((p) => {
-              if (typeof p === 'string') return p;
-              if (p && typeof p === 'object' && typeof p.text === 'string') return p.text;
-              if (p && typeof p === 'object' && typeof p.text?.value === 'string') return p.text.value;
-              if (p && typeof p === 'object' && typeof p.content === 'string') return p.content;
-              return '';
-            })
-            .join('').trim();
-        } else if (typeof choice?.message?.tool_calls?.[0]?.function?.arguments === 'string') {
-          rawText = choice.message.tool_calls[0].function.arguments.trim();
-        } else if (typeof choice?.message?.function_call?.arguments === 'string') {
-          rawText = choice.message.function_call.arguments.trim();
-        } else if (typeof choice?.text === 'string') {
-          rawText = choice.text.trim();
-        } else if (typeof result?.output_text === 'string') {
-          rawText = result.output_text.trim();
-        }
-      }
-
-      rawText = (rawText || '').trim();
-
-      if (!rawText) {
-        const choice = isGpt5 ? null : result?.choices?.[0];
-        if (!isGpt5 && requestBody.response_format) {
-          // Retry without response_format for providers that reject it.
-          const retryBody = { ...requestBody };
-          delete retryBody.response_format;
-
-          let retryResponse;
-          try {
-            retryResponse = await fetch(apiUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-              body: JSON.stringify(retryBody),
-              signal: controller.signal
-            });
-          } catch (retryErr) {
-          }
-
-          if (retryResponse) {
-            const retryRawBody = await retryResponse.text();
-            if (retryRawBody) {
-              let retryResult;
-              try {
-                retryResult = JSON.parse(retryRawBody);
-                const retryChoice = retryResult?.choices?.[0];
-
-                if (typeof retryChoice?.message?.content === 'string') {
-                  rawText = retryChoice.message.content.trim();
-                } else if (Array.isArray(retryChoice?.message?.content)) {
-                  rawText = retryChoice.message.content
-                    .map((p) => {
-                      if (typeof p === 'string') return p;
-                      if (p && typeof p === 'object' && typeof p.text === 'string') return p.text;
-                      if (p && typeof p === 'object' && typeof p.text?.value === 'string') return p.text.value;
-                      if (p && typeof p === 'object' && typeof p.content === 'string') return p.content;
-                      return '';
-                    })
-                    .join('').trim();
-                } else if (typeof retryChoice?.message?.tool_calls?.[0]?.function?.arguments === 'string') {
-                  rawText = retryChoice.message.tool_calls[0].function.arguments.trim();
-                } else if (typeof retryChoice?.message?.function_call?.arguments === 'string') {
-                  rawText = retryChoice.message.function_call.arguments.trim();
-                } else if (typeof retryChoice?.text === 'string') {
-                  rawText = retryChoice.text.trim();
-                } else if (typeof retryResult?.output_text === 'string') {
-                  rawText = retryResult.output_text.trim();
-                }
-
-              } catch (retryParseErr) {
-              }
-            }
-          }
-        }
-
-        if (!rawText) {
-          throw new Error('Model returned empty response content (after retry)');
-        }
-      }
-
-      const draft = validateDraftShape(parseModelResponse(rawText));
-      validateAgainstOptions(draft);
+    const draft = validateDraftShape(parseModelResponse(response.rawText));
+    validateAgainstOptions(draft);
 
       // Weight inference fallback
       if (draft.peso === null || draft.peso === undefined) {
@@ -1341,11 +978,14 @@ Schema:
         };
       }
 
-      return draft;
-    } catch (error) {
-      clearTimeout(timeoutId);
-      throw error;
-    }
+      const resolvedFields = new Set();
+      if (hasValue(draft.marca_text)) resolvedFields.add('marca');
+      if (hasArray(draft.categorias_text)) resolvedFields.add('categorias');
+      if (hasArray(draft.tags_text)) resolvedFields.add('tags');
+      if (Number.isFinite(draft.peso)) resolvedFields.add('peso');
+      draft.missing_fields = draft.missing_fields.filter(field => !resolvedFields.has(normalizeText(field)));
+
+    return draft;
   }
 
   function getLockedFields() {
@@ -1515,7 +1155,7 @@ Schema:
     if (!isConfigReady) {
       hasGeneratedDraft = false;
       updateApplyState();
-      setPanelMessage('error', 'Configure a API key nas opções da extensão.');
+       setPanelMessage('error', 'Configure uma chave API nas opções da extensão.');
       return;
     }
 
@@ -1559,11 +1199,16 @@ Schema:
       if ((!draft.tags_text || draft.tags_text.length === 0) && rulesMatch?.tags?.length) draft.tags_text = rulesMatch.tags;
       if ((!draft.categorias_text || draft.categorias_text.length === 0) && rulesMatch?.category) draft.categorias_text = [rulesMatch.category];
 
-      // Store locked values before resetting
+      // Locks belong to current product only.
       const lockedValues = {};
-      draftState.lockedFields.forEach(field => {
-        lockedValues[field] = getDraftField(field);
-      });
+      if (isSameProduct) {
+        draftState.lockedFields.forEach(field => {
+          lockedValues[field] = getDraftField(field);
+        });
+      } else {
+        draftState.lockedFields = [];
+        shadowRoot?.querySelectorAll('input[data-lock]').forEach(input => { input.checked = false; });
+      }
 
       // Store all current values before reset (to preserve non-empty values if AI returns empty)
       const previousValues = {
@@ -1670,7 +1315,8 @@ Schema:
     inlineBtn.textContent = isGenerating ? '⟳ A gerar…' : '✦ Gerar com IA';
     inlineBtn.disabled = isGenerating || !isConfigReady;
 
-    inlineBtn.addEventListener('click', async () => {
+    inlineBtn.addEventListener('click', async event => {
+      if (!event.isTrusted) return;
       if (isGenerating || !isConfigReady) return;
 
       const titleInput = document.querySelector('#produto_titulo');
@@ -1758,8 +1404,6 @@ Schema:
         searchUrl = `https://www.google.com/search?q=${searchQuery}&tbm=isch`;
       }
       window.open(searchUrl, '_blank');
-      const brandKey = draftState.marca_text ? normalizeText(draftState.marca_text) : 'unknown';
-      await updateSupplierPreference(brandKey, url, group);
     });
     return chip;
   }
@@ -1767,19 +1411,22 @@ Schema:
   async function refreshConfigStatus() {
     const config = await getConfig();
     const warning = getPanelElement('#config-warning');
+    const optionsBtn = getPanelElement('#open-options');
     const generateBtn = getPanelElement('#generate-draft');
     const inlineGenerateBtn = document.querySelector('#ai-product-builder-inline');
     if (!generateBtn || !warning) return;
     isConfigReady = Boolean(config.apiKey);
     if (inlineGenerateBtn) inlineGenerateBtn.disabled = isGenerating || !isConfigReady;
     if (!config.apiKey) {
-      warning.textContent = 'Configure a API key nas opções da extensão.';
+      warning.textContent = 'Configure uma chave API para ativar a geração.';
       warning.className = 'config-status warning';
       generateBtn.disabled = true;
+      if (optionsBtn) optionsBtn.hidden = false;
     } else {
-      warning.textContent = 'Configuração pronta.';
+      warning.textContent = `Configuração pronta · Modelo: ${config.model}`;
       warning.className = 'config-status ready';
       generateBtn.disabled = isGenerating;
+      if (optionsBtn) optionsBtn.hidden = true;
     }
   }
 
@@ -1892,7 +1539,7 @@ Schema:
         }
       });
       if (shouldEnhance) {
-        setTimeout(enhanceChosenCategoryChips, 50);
+        enhanceChosenCategoryChips();
       }
     });
 
@@ -1926,77 +1573,73 @@ Schema:
 
   // Helper: Set value using first existing selector
   function setInputValueFirst(selectors = [], value, fieldName = '', eventName = 'input') {
-    let found = false;
-    for (const sel of selectors) {
-      const result = setInputValue(sel, value, eventName);
-      if (result) {
-        found = true;
-        break;
-      }
-    }
-    if (!found) {
+    const selector = selectors.find(sel => {
+      const state = isFieldEditable(sel);
+      return state.exists && state.editable;
+    });
+    if (!selector) {
       const label = fieldName || selectors.join(', ');
       needsReview.push({ field: selectors[0] || fieldName || 'campo', reason: `Campo não encontrado (${label})` });
+      return false;
     }
-    return found;
+    const el = document.querySelector(selector);
+    el.value = value;
+    dispatchEvents(el, [eventName, 'change']);
+    return true;
   }
 
   // Helper: Set input value with retry logic for stubborn fields
   function setInputValueWithRetry(selector, value, eventName = 'input', maxRetries = 3) {
-    const attemptSet = (retryCount) => {
-      const { exists, editable } = isFieldEditable(selector);
-      if (!exists) {
-        if (retryCount < maxRetries) {
-          setTimeout(() => attemptSet(retryCount + 1), 500 * (retryCount + 1));
-          return false;
+    return new Promise(resolve => {
+      const attempt = retryCount => {
+        const { exists, editable } = isFieldEditable(selector);
+        if (exists && editable) {
+          const el = typeof selector === 'string' ? document.querySelector(selector) : selector;
+          el.value = value;
+          dispatchEvents(el, [eventName, 'change']);
+          resolve(true);
+          return;
         }
-        needsReview.push({ field: selector, reason: 'Element not found after retries' });
-        return false;
-      }
-      if (!editable) {
-        needsReview.push({ field: selector, reason: 'Field is disabled' });
-        return false;
-      }
-      const el = typeof selector === 'string' ? document.querySelector(selector) : selector;
-      el.value = value;
-      dispatchEvents(el, [eventName, 'change']);
-      return true;
-    };
-    return attemptSet(0);
+        if (!exists && retryCount < maxRetries) {
+          setTimeout(() => attempt(retryCount + 1), 500 * (retryCount + 1));
+          return;
+        }
+        needsReview.push({ field: selector, reason: !exists ? 'Element not found after retries' : 'Field is disabled' });
+        resolve(false);
+      };
+      attempt(0);
+    });
   }
 
   // Helper: Set value using first existing selector with retry
   function setInputValueFirstWithRetry(selectors = [], value, fieldName = '', eventName = 'input', maxRetries = 3) {
-    let found = false;
     let lastError = '';
-
-    const attemptSet = (retryCount) => {
+    return new Promise(resolve => {
+      const attempt = retryCount => {
       for (const sel of selectors) {
         const { exists, editable } = isFieldEditable(sel);
         if (exists && editable) {
           const el = document.querySelector(sel);
           el.value = value;
           dispatchEvents(el, [eventName, 'change']);
-          found = true;
-          return true;
+          resolve(true);
+          return;
         }
         if (!exists) lastError = 'Element not found';
         if (!editable) lastError = 'Field is disabled';
       }
 
-      if (!found && retryCount < maxRetries) {
-        setTimeout(() => attemptSet(retryCount + 1), 500 * (retryCount + 1));
-        return false;
+      if (retryCount < maxRetries) {
+        setTimeout(() => attempt(retryCount + 1), 500 * (retryCount + 1));
+        return;
       }
 
-      if (!found) {
-        const label = fieldName || selectors.join(', ');
-        needsReview.push({ field: selectors[0] || fieldName || 'campo', reason: `Campo não encontrado após ${maxRetries} tentativas (${label}): ${lastError}` });
-      }
-      return found;
-    };
-
-    return attemptSet(0);
+      const label = fieldName || selectors.join(', ');
+      needsReview.push({ field: selectors[0] || fieldName || 'campo', reason: `Campo não encontrado após ${maxRetries} tentativas (${label}): ${lastError}` });
+      resolve(false);
+      };
+      attempt(0);
+    });
   }
 
   // Helper: Set Chosen.js select with aggressive updates
@@ -2035,33 +1678,6 @@ Schema:
     el.dispatchEvent(new Event('chosen:updated', { bubbles: true }));
     el.dispatchEvent(new Event('liszt:updated', { bubbles: true }));
 
-    // Multiple retries to ensure chosen.js updates
-    const delays = [50, 150, 300, 600];
-    delays.forEach((delay, index) => {
-      setTimeout(() => {
-        // Re-verify value
-        if (el.value !== value) {
-          el.value = value;
-        }
-
-        // Trigger events again
-        dispatchEvents(el, ['change', 'input']);
-        el.dispatchEvent(new Event('chosen:updated', { bubbles: true }));
-
-        if (window.jQuery) {
-          try {
-            const $el = window.jQuery(el);
-            $el.val(value).trigger('change');
-            $el.trigger('chosen:updated');
-            $el.trigger('liszt:updated');
-          } catch (e) {
-            // Ignore
-          }
-        }
-
-      }, delay);
-    });
-
     return true;
   }
 
@@ -2077,12 +1693,14 @@ Schema:
       return false;
     }
 
+    const safeHtml = sanitizeDescriptionHtml(html);
+
     ensureElementTabActive(element);
 
     if (window.tinymce && element.id) {
       const ed = window.tinymce.get(element.id);
       if (ed) {
-        ed.setContent(sanitizeDescriptionHtml(html));
+        ed.setContent(safeHtml);
         ed.save();
         ed.fire('change');
         ed.fire('input');
@@ -2091,27 +1709,9 @@ Schema:
         return true;
       }
 
-      element.value = html || '';
+      element.value = safeHtml;
       dispatchEvents(element, ['input', 'change']);
 
-      const retrySetContent = (delay) => {
-        setTimeout(() => {
-          ensureElementTabActive(element);
-          const edRetry = window.tinymce?.get(element.id);
-          if (edRetry) {
-            edRetry.setContent(sanitizeDescriptionHtml(html));
-            edRetry.save();
-            edRetry.fire('change');
-            edRetry.fire('input');
-            if (typeof edRetry.focus === 'function') edRetry.focus();
-            dispatchEvents(element, ['input', 'change']);
-          }
-        }, delay);
-      };
-
-      retrySetContent(500);
-      retrySetContent(1500);
-      retrySetContent(3000);
       return true;
     }
 
@@ -2122,7 +1722,6 @@ Schema:
       const body = iframe.contentWindow.document.body;
       if (body) {
         body.replaceChildren();
-        const safeHtml = sanitizeDescriptionHtml(html);
         body.insertAdjacentHTML('beforeend', safeHtml);
         element.value = safeHtml;
         dispatchEvents(element, ['input', 'change']);
@@ -2131,7 +1730,7 @@ Schema:
       }
     }
 
-    element.value = sanitizeDescriptionHtml(html);
+    element.value = safeHtml;
     dispatchEvents(element, ['input', 'change']);
     return true;
   }
@@ -2202,55 +1801,6 @@ Schema:
       wrapper.dispatchEvent(new Event('change', { bubbles: true }));
     }
 
-    // Multiple retries to ensure tags stick
-    const retryDelays = [100, 300, 600, 1000];
-    retryDelays.forEach((delay, i) => {
-      setTimeout(() => {
-        // Re-verify input value
-        if (input.value !== clean.join(',')) {
-          input.value = clean.join(',');
-          input.dispatchEvent(new Event('change', { bubbles: true }));
-        }
-
-        // Re-create visual tags if wrapper exists
-        if (wrapper) {
-          const currentTags = wrapper.querySelectorAll('.tag');
-          if (currentTags.length !== clean.length) {
-            currentTags.forEach(t => t.remove());
-            const wrapperInput = wrapper.querySelector('input[type="text"]');
-            clean.forEach(tag => {
-              const span = document.createElement('span');
-              span.className = 'tag label label-info';
-              span.textContent = tag;
-              span.style.cssText = 'display:inline-block;padding:3px 8px;margin:2px 4px 2px 0;background:#5bc0de;color:white;border-radius:3px;font-size:12px;';
-              if (wrapperInput) {
-                wrapper.insertBefore(span, wrapperInput);
-              } else {
-                wrapper.appendChild(span);
-              }
-            });
-          }
-        }
-      }, delay);
-    });
-
-    return true;
-  }
-
-  // Helper: Set checkbox/radio
-  function setCheckbox(selector, checked) {
-    const { exists, editable } = isFieldEditable(selector);
-    if (!exists) {
-      needsReview.push({ field: selector, reason: 'Element not found' });
-      return false;
-    }
-    if (!editable) {
-      needsReview.push({ field: selector, reason: 'Field is disabled' });
-      return false;
-    }
-    const el = document.querySelector(selector);
-    el.checked = checked;
-    dispatchEvents(el, ['change']);
     return true;
   }
 
@@ -2283,12 +1833,10 @@ Schema:
       excerptValue = excerptValue.substring(0, excerptMax - 3) + '...';
     }
 
-    if (setInputValueWithRetry('#excerpt', excerptValue, 'input', 3)) appliedCount++;
+    if (await setInputValueWithRetry('#excerpt', excerptValue, 'input', 3)) appliedCount++;
     if ((data.excerpt || '').length > excerptMax) {
       needsReview.push({ field: '#excerpt', reason: `Excerto foi cortado para ${excerptMax} caracteres` });
     }
-    if (setChosenSelect('#type', 'physical')) appliedCount++;
-
     // Categories with hierarchy support
     if (hasArray(data.categorias_text)) {
       const catSelect = document.querySelector('#categorias')
@@ -2357,11 +1905,9 @@ Schema:
         });
 
         if (matchedValues.size > 0) {
-          // Select all matched options
+          // Replace category selection instead of accumulating stale values.
           options.forEach(opt => {
-            if (matchedValues.has(opt.value)) {
-              opt.selected = true;
-            }
+            opt.selected = matchedValues.has(opt.value);
           });
 
           // Dispatch events to update chosen.js
@@ -2382,12 +1928,7 @@ Schema:
           // Setup observer and enhance chips after chosen.js renders them
           setupCategoryObserver();
 
-          // Multiple attempts to enhance chips as chosen.js renders them
-          [100, 300, 600, 1000].forEach(delay => {
-            setTimeout(() => {
-              enhanceChosenCategoryChips();
-            }, delay);
-          });
+          enhanceChosenCategoryChips();
 
           appliedCount++;
         } else {
@@ -2424,41 +1965,6 @@ Schema:
       dispatchEvents(el, ['change', 'input', 'blur']);
       el.dispatchEvent(new Event('chosen:updated', { bubbles: true }));
       el.dispatchEvent(new Event('liszt:updated', { bubbles: true }));
-
-      // Method 4: Find and click the chosen.js dropdown option
-      setTimeout(() => {
-        const chosenId = el.getAttribute('id') || 'marca';
-        const chosenContainer = document.querySelector(`#${chosenId}_chzn, #${chosenId}_chosen, .chosen-container[data-uuid*="${chosenId}"]`);
-        if (chosenContainer) {
-          const chosenOptions = chosenContainer.querySelectorAll('.chosen-results li, .chzn-results li');
-          chosenOptions.forEach(li => {
-            if (li.textContent.trim() === brandText) {
-              li.click();
-            }
-          });
-        }
-      }, 100);
-
-      // Verify and retry
-      const verifyAndRetry = (attempt) => {
-        setTimeout(() => {
-          if (el.value !== value) {
-            el.value = value;
-            dispatchEvents(el, ['change', 'input']);
-            el.dispatchEvent(new Event('chosen:updated', { bubbles: true }));
-
-            if (window.jQuery) {
-              try {
-                window.jQuery(el).val(value).trigger('change').trigger('chosen:updated');
-              } catch (e) {}
-            }
-          } else {
-          }
-        }, attempt * 200);
-      };
-
-      // Multiple verification retries
-      [1, 2, 3, 5, 8].forEach(verifyAndRetry);
 
       return true;
     }
@@ -2583,28 +2089,32 @@ Schema:
       }
     }
 
-    // Pricing is intentionally untouched; price requires explicit user input.
-    if (setInputValue('#peso', data.peso || 0)) appliedCount++;
-    if (setInputValue('#referencia', data.referencia || '')) appliedCount++;
-    if (setInputValue('#barcode', data.barcode || '')) appliedCount++;
+    // Pricing and unknown values remain untouched; they require explicit user input.
+    if (Number.isFinite(data.peso) && data.peso >= 0) {
+      if (setInputValue('#peso', data.peso)) appliedCount++;
+    } else {
+      needsReview.push({ field: '#peso', reason: 'Peso desconhecido; confirme manualmente.' });
+    }
+    if (hasValue(data.referencia) && setInputValue('#referencia', data.referencia)) appliedCount++;
+    if (hasValue(data.barcode) && setInputValue('#barcode', data.barcode)) appliedCount++;
 
     const seoTitleVal = (data.meta_title ?? data.seo?.product_page_title ?? data.seo?.produto_meta_titulo ?? '').trim();
     const trimmedSeoTitle = trimToElementMax('#product_page_title', seoTitleVal, 70, 'Título SEO');
-    if (setInputValueFirstWithRetry(['#product_page_title', '#produto_meta_titulo'], trimmedSeoTitle.value, 'Título SEO', 'input', 3)) appliedCount++;
+    if (await setInputValueFirstWithRetry(['#product_page_title', '#produto_meta_titulo'], trimmedSeoTitle.value, 'Título SEO', 'input', 3)) appliedCount++;
     if (trimmedSeoTitle.trimmed) {
       needsReview.push({ field: '#product_page_title', reason: `Título SEO foi cortado para ${trimmedSeoTitle.maxLength} caracteres` });
     }
 
     const seoDescVal = data.meta_description ?? data.seo?.product_meta_description ?? data.seo?.produto_meta_descricao ?? '';
     const trimmedSeoDesc = trimToElementMax('#product_meta_description', seoDescVal, 140, 'Meta descrição');
-    if (setInputValueFirstWithRetry(['#product_meta_description', '#produto_meta_descricao'], trimmedSeoDesc.value, 'Meta descrição', 'input', 3)) appliedCount++;
+    if (await setInputValueFirstWithRetry(['#product_meta_description', '#produto_meta_descricao'], trimmedSeoDesc.value, 'Meta descrição', 'input', 3)) appliedCount++;
     if (trimmedSeoDesc.trimmed) {
       needsReview.push({ field: '#product_meta_description', reason: `Meta descrição foi cortada para ${trimmedSeoDesc.maxLength} caracteres` });
     }
 
     const metaTagsVal = data.meta_tags ?? data.meta_keywords ?? data.seo?.product_meta_tags ?? data.seo?.product_meta_keywords ?? '';
     const trimmedMetaTags = trimToElementMax('#product_meta_tags', metaTagsVal, null, 'Meta tags');
-    if (setInputValueFirstWithRetry(['#product_meta_tags', '#produto_meta_keywords'], trimmedMetaTags.value, 'Meta tags', 'input', 3)) appliedCount++;
+    if (await setInputValueFirstWithRetry(['#product_meta_tags', '#produto_meta_keywords'], trimmedMetaTags.value, 'Meta tags', 'input', 3)) appliedCount++;
 
     let handleVal = data.handle ?? data.slug ?? data.seo?.product_handle ?? data.seo?.produto_url_amigavel ?? '';
     if (!handleVal && data.titulo) {
@@ -2624,126 +2134,14 @@ Schema:
       }
     }
 
-    // Forced settings
-    if (document.querySelector('#taxable')) {
-      setCheckbox('#taxable', true);
-    } else if (document.querySelector('input[name="taxable"]')) {
-      setCheckbox('input[name="taxable"]', true);
-    }
-
-    const statusHidden = document.querySelector('input[name="estado"][value="2"]');
-    if (statusHidden && statusHidden.checked === false) {
-      statusHidden.checked = true;
-      dispatchEvents(statusHidden, ['change', 'input']);
-    } else if (!statusHidden) {
-      const statusSelect = document.querySelector('#estado') || document.querySelector('select[name="estado"], select[id*="estado"]');
-      if (statusSelect) {
-        const opt = Array.from(statusSelect.options || []).find(o => o.value === '2' || normalizeText(o.text) === 'escondido');
-        if (opt) {
-          statusSelect.value = opt.value;
-          dispatchEvents(statusSelect, ['change', 'input']);
-        }
-      }
-    }
-
-    // Uncheck all Atributos checkboxes with force - multiple attempts for stubborn checkboxes
-    async function forceUncheckCheckbox(selector, attempts = 0) {
-      const el = document.querySelector(selector);
-      if (!el) {
-        return;
-      }
-
-      // Check if already unchecked
-      if (!el.checked && !el.hasAttribute('checked')) {
-        return;
-      }
-
-      // Aggressive uncheck - multiple methods
-      el.checked = false;
-      el.removeAttribute('checked');
-
-      // Also update value if it's a checkbox with value="1"
-      if (el.getAttribute('value') === '1') {
-        el.setAttribute('value', '0');
-      }
-
-      // Dispatch all possible events
-      ['change', 'click', 'input', 'blur'].forEach(eventType => {
-        const event = new Event(eventType, { bubbles: true, cancelable: true });
-        el.dispatchEvent(event);
-      });
-
-      // Also try to find and uncheck any associated hidden input
-      const name = el.getAttribute('name');
-      if (name) {
-        const hiddenInput = document.querySelector(`input[type="hidden"][name="${name}"]`);
-        if (hiddenInput) {
-          hiddenInput.value = '0';
-          hiddenInput.removeAttribute('checked');
-        }
-      }
-
-
-      // Retry up to 5 times with increasing delays (more aggressive)
-      if (attempts < 5) {
-        const delays = [100, 250, 500, 750, 1000];
-        setTimeout(() => {
-          const reCheck = document.querySelector(selector);
-          if (reCheck && (reCheck.checked || reCheck.hasAttribute('checked'))) {
-            forceUncheckCheckbox(selector, attempts + 1);
-          }
-        }, delays[attempts] || 1000);
-      }
-    }
-
-    // Execute immediately and also after small delays
-    const checkboxSelectors = [
-      'input[name="destaque"]',
-      'input[name="novidade"]',
-      'input[name="is_promotion"]',
-      'input[name="destaque"][type="checkbox"]',
-      'input[name="novidade"][type="checkbox"]',
-      'input[name="is_promotion"][type="checkbox"]'
-    ];
-
-    // Execute with increasing delays to catch any page re-checking
-    [0, 100, 300, 600, 1000].forEach((delay, index) => {
-      setTimeout(() => {
-        checkboxSelectors.forEach(selector => {
-          forceUncheckCheckbox(selector, index > 0 ? index : 0);
-        });
-      }, delay);
-    });
-
-    // Additional safety: set up mutation observer to catch any re-checking
-    checkboxSelectors.forEach(selector => {
-      const el = document.querySelector(selector);
-      if (el) {
-        const observer = new MutationObserver((mutations) => {
-          mutations.forEach((mutation) => {
-            if (mutation.type === 'attributes' && (mutation.attributeName === 'checked' || el.checked)) {
-              el.checked = false;
-              el.removeAttribute('checked');
-              // Also try unchecking by clicking the label
-              const label = document.querySelector(`label[for="${el.id}"]`);
-              if (label && el.checked) {
-                label.click();
-              }
-            }
-          });
-        });
-        observer.observe(el, { attributes: true });
-      }
-    });
-
     // Display needs review and update summary
       displayNeedsReview();
       updateSummaryStats();
       updateBadgeStatuses();
-      return true;
+      return { success: appliedCount > 0, appliedCount, reviewCount: needsReview.length };
     } catch (error) {
       console.error('[AIPB] Failed to apply product data');
-      return false;
+      return { success: false, appliedCount: 0, reviewCount: needsReview.length };
     }
   }
 
@@ -2865,8 +2263,8 @@ Schema:
     });
   }
 
-  // Open media modal and attach files
-  async function attachMedia(filenames) {
+  // Open media modal and prefill a search term. User selects and confirms media.
+  async function openMediaSearch(filenames) {
     // Click "Adicionar" button
     const addBtn = document.querySelector('.add-product-images.btn-global-media-modal');
     if (!addBtn) {
@@ -2891,62 +2289,16 @@ Schema:
       await sleep(300);
     }
 
-    // Search and select files
+    // Prefill first term only. Never select or confirm assets automatically.
     const searchInput = modal.querySelector('input[name="q"]');
-    const mediaGrid = modal.querySelector('.list-media');
 
-    if (!searchInput || !mediaGrid) {
-      alert('Search or grid not found');
+    if (!searchInput) {
+      alert('Campo de pesquisa de media não encontrado');
       return;
     }
 
-    let foundAny = false;
-    for (const filename of filenames) {
-      searchInput.value = filename;
-      dispatchEvents(searchInput, ['input']);
-      await sleep(500);
-
-      const items = mediaGrid.querySelectorAll('li');
-      items.forEach(item => {
-        if (item.textContent.toLowerCase().includes(filename.toLowerCase())) {
-          item.click();
-          foundAny = true;
-        }
-      });
-    }
-
-    // Show instruction if no match found
-    if (!foundAny) {
-      const reviewList = getPanelElement('#needs-review-list');
-      if (reviewList) {
-        const li = document.createElement('li');
-        li.className = 'warning';
-        li.textContent = 'Sem media encontrado. Faça upload manual ou ajuste os termos de pesquisa.';
-        reviewList.appendChild(li);
-      }
-      return;
-    }
-
-    // Wait for .btn-insert to become enabled
-    const confirmBtn = modal.querySelector('.btn-insert');
-    if (!confirmBtn) {
-      alert('Confirm button not found');
-      return;
-    }
-
-    // Poll for button to become enabled (max 5 seconds)
-    let attempts = 0;
-    while (confirmBtn.disabled && attempts < 10) {
-      await sleep(500);
-      attempts++;
-    }
-
-    if (confirmBtn.disabled) {
-      alert('Confirm button still disabled after 5 seconds');
-      return;
-    }
-
-    confirmBtn.click();
+    searchInput.value = filenames[0] || '';
+    dispatchEvents(searchInput, ['input', 'change']);
   }
 
   function createPanel() {
@@ -3428,7 +2780,8 @@ Schema:
 
             </div>
             <button id="generate-draft" class="panel-btn primary" type="button" disabled>Gerar rascunho</button>
-            <p id="config-warning" class="config-status" aria-live="polite"></p>
+    <p id="config-warning" class="config-status" aria-live="polite"></p>
+    <button id="open-options" class="panel-btn secondary" type="button">Configurar OpenAI</button>
             <p id="panel-message" class="panel-message info" role="status" aria-live="polite" hidden></p>
           </div>
 
@@ -3554,21 +2907,23 @@ Schema:
 
     toggleButton.addEventListener('click', () => togglePanel(toggleButton));
 
-    getPanelElement('#generate-draft').addEventListener('click', async () => {
+    getPanelElement('#generate-draft').addEventListener('click', async event => {
+      if (!event.isTrusted) return;
       await generateDraftForPreview();
     });
 
-    getPanelElement('#apply-form').addEventListener('click', async () => {
+    getPanelElement('#apply-form').addEventListener('click', async event => {
+      if (!event.isTrusted) return;
       if (!hasGeneratedDraft || isGenerating) return;
       updateDraftFromPreview();
-      const appliedSuccessfully = await applyProductData(draftState);
-      if (!appliedSuccessfully) {
+      const applyResult = await applyProductData(draftState);
+      if (!applyResult.success) {
         setPanelMessage('error', 'Não foi possível aplicar o rascunho. Reveja o formulário e tente novamente.');
         return;
       }
       setPanelMessage(needsReview.length > 0 ? 'error' : 'success', needsReview.length > 0
-        ? 'Dados aplicados. Reveja os campos assinalados.'
-        : 'Dados aplicados ao formulário. Confirme antes de gravar.');
+        ? `${applyResult.appliedCount} campos aplicados. Reveja os campos assinalados.`
+        : `${applyResult.appliedCount} campos aplicados. Confirme antes de gravar.`);
 
       if (needsReview.length > 0) {
         const firstItem = needsReview[0];
@@ -3587,10 +2942,16 @@ Schema:
     getPanelElement('#open-media').addEventListener('click', () => {
       updateDraftFromPreview();
       if (draftState.media && hasArray(draftState.media.attach_existing_by_search)) {
-        attachMedia(draftState.media.attach_existing_by_search);
+        openMediaSearch(draftState.media.attach_existing_by_search);
       } else {
         alert('Sem media encontrado');
       }
+    });
+
+    getPanelElement('#open-options').addEventListener('click', () => chrome.runtime.sendMessage({ type: 'open-options' }));
+
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName === 'local' && (changes.apiKey || changes.model)) refreshConfigStatus();
     });
 
     document.addEventListener('keydown', event => {

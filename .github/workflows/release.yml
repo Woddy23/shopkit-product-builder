@@ -1,0 +1,33 @@
+name: Extension Release Artifact
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --check extension/content.js
+      - run: node --check extension/options.js
+      - run: node --check extension/background.js
+      - run: node tests/validate-manifest.js
+      - run: node tests/regression.test.js
+      - name: Package extension
+        shell: bash
+        run: |
+          mkdir -p dist
+          cd extension
+          zip -r "../dist/shopkit-product-builder-${GITHUB_REF_NAME}.zip" . \
+            -x 'create-icons.ps1' 'icons/icon.svg'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shopkit-product-builder-${{ github.ref_name }}
+          path: dist/*.zip

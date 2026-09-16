@@ -1,28 +1,37 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="pt-PT">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Shopkit Product Builder Options</title>
+  <title>Configuração | Shopkit Product Builder</title>
   <link rel="stylesheet" href="options.css" />
 </head>
 <body>
   <main class="options">
+    <p class="eyebrow">CONFIGURAÇÃO DA EXTENSÃO</p>
     <h1>Shopkit Product Builder</h1>
-    <p class="note">API key is stored locally with chrome.storage.local. Local storage is not an encrypted secrets vault.</p>
+    <p class="intro">Configure a ligação à OpenAI antes de abrir uma página de criação de produto Shopkit.</p>
+
+    <div class="steps" aria-label="Passos de configuração">
+      <span class="step active">1. Chave API</span>
+      <span class="step">2. Modelo</span>
+    </div>
 
     <label class="field">
-      <span>OpenAI API Key</span>
-      <input id="api-key" type="password" placeholder="sk-..." autocomplete="off" />
+      <span>Chave API da OpenAI</span>
+      <input id="api-key" type="password" placeholder="Cole a chave aqui" autocomplete="off" />
+      <small>Use uma chave com limite de utilização. A chave fica guardada apenas neste perfil do Chrome e não é uma vault encriptada.</small>
     </label>
 
     <label class="field">
-      <span>Model</span>
+      <span>Modelo</span>
       <input id="model" type="text" placeholder="gpt-5.6-luna" value="gpt-5.6-luna" />
+      <small><strong>Recomendado:</strong> <code>gpt-5.6-luna</code>. Outros modelos disponíveis na sua conta podem funcionar, mas não têm a mesma garantia de compatibilidade.</small>
     </label>
 
     <div class="actions">
-      <button id="save" type="button">Save</button>
+      <button id="save" type="button">Guardar configuração</button>
+      <button id="clear-key" class="secondary" type="button">Apagar chave guardada</button>
       <span id="status" class="status" aria-live="polite"></span>
     </div>
   </main>

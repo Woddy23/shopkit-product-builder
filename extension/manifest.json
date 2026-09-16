@@ -4,9 +4,16 @@
   "version": "1.0.0",
   "description": "AI-powered product form filler for Shopkit admin",
   "permissions": ["storage"],
+  "host_permissions": ["https://api.openai.com/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Configurar Shopkit Product Builder"
+  },
   "content_scripts": [
     {
-      "matches": ["https://example-store.shopk.it/admin/products/create"],
+      "matches": ["https://*.shopk.it/admin/products/create"],
       "js": ["content.js"],
       "css": ["panel.css"],
       "run_at": "document_idle"

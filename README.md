@@ -1,153 +1,182 @@
-# ShopKit Product Builder
+# Shopkit Product Builder
 
-Chrome extension that turns a product title into a structured, editable ecommerce draft, then safely applies reviewed product, category, and SEO data to a Shopkit product form.
+Chrome extension that turns a Shopkit product title into an editable Portuguese product draft. Review the draft, apply selected fields to the Shopkit form, then save the product yourself.
 
-Built with JavaScript, Chrome Manifest V3, OpenAI Responses API, GPT-5.6 Luna, and strict Structured Outputs. Human review remains required before Apply.
+> Portfolio/experimental software. Test on non-production products first. AI output can be wrong.
 
-## Demo / Screenshot
+## What It Does
 
-A sanitized product-workflow demo will be added here.
+1. Reads the product title and available Shopkit brands, categories, and tags.
+2. Sends generation context to OpenAI through the extension service worker.
+3. Shows an editable draft inside a Portuguese assistant panel.
+4. Lets you review, edit, and lock selected values before regeneration.
+5. Applies reviewed content to the Shopkit form only after explicit action.
 
-## Problem
+It does **not** submit, publish, or save the Shopkit product automatically. Media selection and final product save remain manual.
 
-Shopkit product creation requires repetitive entry across title and content, description, excerpt, category, brand, tags, weight, SEO metadata, and media lookup. This extension reduces drafting work while preserving review for critical product decisions.
+## Requirements
 
-## Solution
+- Desktop Google Chrome with Manifest V3 support.
+- Access to a Shopkit admin product-create page: `https://YOUR-STORE.shopk.it/admin/products/create`.
+- OpenAI API key with billing/credits and a spending limit.
+- Permission to send product titles and Shopkit option lists to OpenAI.
 
-Content script discovers relevant Shopkit form options, requests one structured draft, validates it against available options, and presents editable fields before any native form write.
+## Download
 
-## Workflow
+The repository source is not itself a Chrome extension ZIP. Chrome must load the extracted folder that contains `manifest.json`.
+
+- **Recommended:** download the versioned extension ZIP from the [Releases page](https://github.com/Woddy23/shopkit-product-builder/releases) when available.
+- **Source ZIP:** click **Code → Download ZIP**, extract it, then select `shopkit-product-builder-main/extension/` in Chrome.
+
+There is currently no Chrome Web Store listing. The release ZIP is a sideload package for Chrome Developer mode.
+
+## Install
+
+1. Download and extract a release ZIP, or use **Code → Download ZIP** and extract the source archive.
+2. Open `chrome://extensions/`.
+3. Enable **Developer mode**.
+4. Click **Load unpacked**.
+5. Select the extracted folder that directly contains `manifest.json`. For a source ZIP, this is `shopkit-product-builder-main/extension/`, not the repository root, ZIP file, or ZIP contents before extraction.
+6. Confirm the extension card shows version `1.0.0` without an error banner.
+7. Click the extension icon. The Options page opens.
+8. Paste your OpenAI API key.
+9. Keep recommended model `gpt-5.6-luna`, or enter another model available to your account.
+10. Click **Guardar configuração**.
+11. Open your Shopkit product-create page.
+12. Confirm that `✦ Assistente IA` appears in the bottom-left corner.
+
+No source file needs store URL editing. The extension matches only HTTPS `*.shopk.it/admin/products/create` pages. After changing extension files, click **Reload** in `chrome://extensions/` and refresh Shopkit.
+
+## OpenAI Configuration
+
+`gpt-5.6-luna` is the tested and recommended default. Other compatible model names can be entered, but compatibility and output quality are not guaranteed. GPT-5-prefixed models use OpenAI Responses API Structured Outputs. Other models use a compatibility JSON path and receive stronger runtime validation before Apply.
+
+The API key is stored in `chrome.storage.local` for this Chrome profile and used only by the extension service worker. It is not encrypted secret storage. Use a restricted key with spending limits, never commit it, and never use it on a shared machine. Options page can delete the saved key.
+
+Create an API key in the [OpenAI API keys page](https://platform.openai.com/api-keys). API billing is separate from a ChatGPT subscription. Check [API billing and usage limits](https://platform.openai.com/settings/organization/limits) before generating drafts. Revoke a compromised key from the API keys page, then remove the local copy with **Apagar chave guardada**.
+
+| Model | Status | Request path |
+|---|---|---|
+| `gpt-5.6-luna` | Tested and recommended | Responses API with strict JSON Schema |
+| Other `gpt-5*` models | Expected compatible, not fully tested | Responses API with strict JSON Schema |
+| Other model names | Compatibility path; experimental | Chat Completions JSON mode |
+
+The extension accepts another model name because model access varies by OpenAI account. A model must be available to your API project; an unavailable model returns an API error.
+
+## Permissions
+
+| Permission | Why it is requested |
+|---|---|
+| `storage` | Stores the API key and selected model in this Chrome profile |
+| `https://api.openai.com/*` | Lets the service worker send generation requests to OpenAI |
+| `https://*.shopk.it/admin/products/create` | Injects the assistant only on Shopkit product-create pages |
+
+The extension does not request all-site access, cookies, browsing history, downloads, Shopkit authentication tokens, or arbitrary external messaging.
+
+## Quick Start
+
+1. Open a Shopkit product-create page.
+2. Enter a product title in Shopkit.
+3. Click `Gerar com IA` beside the title or open the assistant and click `Gerar rascunho`.
+4. Review every generated field and every warning.
+5. Edit inaccurate values. Do not trust generated barcode, reference, weight, or factual claims without checking them.
+6. Use `Manter` locks only when regenerating the same product.
+7. Click `Aplicar ao formulário`.
+8. Review the native Shopkit form.
+9. Open media search, select assets manually, and confirm them in Shopkit.
+10. Save the product manually in Shopkit.
+
+Generate does not change native Shopkit fields. Apply does not save the product. Price, tax, status, featured, new-product, and promotion settings are not generated or changed.
+
+## Fields Applied
+
+| Field | Generated | Previewed | Applied | Notes |
+|---|---:|---:|---:|---|
+| Title | Yes | Yes | Yes | Review before saving |
+| Description | Yes | Yes | Yes | Sanitized HTML |
+| Excerpt | Yes | Yes | Yes | Limited to 85 characters |
+| Brand | Suggested | Yes | If matched | Existing Shopkit option required |
+| Categories | Suggested | Yes | If matched | Replaces stale selections |
+| Tags | Suggested | Yes | Yes | Shopkit widget dependent |
+| Weight | Suggested | Yes | If known | Unknown value stays untouched |
+| Reference | Suggested | Yes | If present | Verify manually |
+| Barcode | Suggested | Yes | If present | Never trust generated barcode without checking |
+| SEO fields | Yes | Yes | Yes | Native field limits apply |
+| Handle | Yes | Details | Yes | Verify URL slug |
+| Price | No | No | No | Manual |
+| Tax/status/flags | No | No | No | Preserved |
+| Media | Search terms | Yes | No | User selects and confirms |
+| Final save | No | No | No | Manual Shopkit action |
+
+## Data Flow
 
 ```text
-Product Title
-     |
-Generate
-     |
-OpenAI Structured Output
-     |
-Validation
-     |
-Editable Preview
-     |
-Review / Edit / Lock
-     |
-Explicit Apply
-     |
-Shopkit Form
-     |
-Manual Shopkit Save
+Shopkit product page
+        |
+        | title + discovered option labels
+        v
+Chrome content script
+        |
+        | prompt + JSON schema message
+        v
+Chrome service worker --> OpenAI API
+        |
+        v
+Validated editable draft
+        |
+        | explicit Apply
+        v
+Shopkit form --> manual Shopkit save
 ```
 
-Generate does **not** write to native Shopkit form. Apply is explicit. Final Shopkit save remains manual.
+No backend or Shopkit API exists. OpenAI receives the product title and discovered context such as category, brand, and tag labels. Supplier suggestion links are generated for review only. Clicking a supplier/search suggestion opens Google with a product query; Chrome then sends that query to Google. The selected supplier preference is stored locally. Review your organisation's data policy before using client or confidential product information.
 
-## Engineering Highlights
+## Troubleshooting
 
-- Manifest V3 content script with narrow host permission.
-- Shadow DOM assistant UI, responsive panel, closed initial state, Escape close.
-- OpenAI Responses API with `gpt-5.6-luna` default, `reasoning.effort: none`, and `store: false`.
-- Strict JSON Schema Structured Outputs.
-- DOM option discovery and validation for categories and brands.
-- TinyMCE description writes and Chosen.js select synchronization.
-- Product identity protection, stale-draft invalidation, and field locks across regeneration.
-- Sanitized generated HTML and classified API errors.
-- Focused Node regression tests for workflow and safety invariants.
+| Symptom | Check |
+|---|---|
+| Assistant does not appear | Confirm URL uses HTTPS and ends with `/admin/products/create`; reload extension and page |
+| Generate is disabled | Open extension Options and save a non-empty API key |
+| HTTP 401 | Key invalid, revoked, or copied incorrectly |
+| HTTP 400 | Model name or API request unsupported; try `gpt-5.6-luna` |
+| HTTP 429 | API quota, credits, spending limit, or rate limit |
+| Timeout | OpenAI or network response exceeded 60 seconds |
+| Network failure | Check Chrome connectivity, proxy, firewall, and service worker errors |
+| Brand/category warning | Shopkit selectors or available options changed |
+| Description not updated | Shopkit TinyMCE/editor structure changed; review field manually |
+| Stale select or tags UI | Shopkit Chosen/tags widget changed; verify native form value |
+| Media search fails | Shopkit media modal selectors changed; select media manually |
+| Source change has no effect | Reload extension, then refresh Shopkit page |
 
-## Architecture
+Never include API keys, cookies, session data, client screenshots, or raw private product data in bug reports.
 
-```mermaid
-flowchart TD
-    A[Shopkit Product Page] -->|DOM discovery| B[Chrome MV3 Extension]
-    B --> C[OpenAI Responses API]
-    C -->|Strict Structured Output| D[Draft Validation]
-    D --> E[Editable Preview]
-    E -->|Explicit Apply| F[Shopkit Form]
-    F -->|Manual action| G[Shopkit Save]
-```
+## Development
 
-`extension/content.js` owns page integration, draft lifecycle, validation, and explicit Apply. `extension/options.js` stores user configuration locally. No backend exists.
-
-## Safety by Design
-
-- Price is never automatically overwritten.
-- Generate never automatically applies data.
-- Apply requires explicit user action.
-- Extension never automatically triggers "Gravar dados".
-- Generated HTML is sanitized before description writes.
-- API keys are never bundled in repository.
-- Luna path disables OpenAI request storage with `store: false`.
-- Host matching stays intentionally narrow.
-- Generation errors are sanitized before logging.
-- `chrome.storage.local` stores local extension data; it is not encrypted secrets storage.
-
-See [SECURITY.md](SECURITY.md) for API-key and data-handling guidance.
-
-## Technical Challenges
-
-- Integrating with dynamic Shopkit DOM without official application API access.
-- Synchronizing native selects with Chosen.js and rich text with TinyMCE.
-- Validating generated category and brand names against options present on page.
-- Keeping regeneration, edited drafts, field locks, and product identity separate.
-- Rejecting unsafe description HTML and reporting expected API failures safely.
-
-## Testing
-
-Regression checks cover `500ml`, `6x500ml`, multi-component weights, bundle detection, excerpt length, price preservation, Generate/Apply separation, no automatic submission, stale-draft invalidation, product identity, locks, category handling, closed/open Shadow DOM panel state, Escape close, inline Generate recovery, API configuration readiness, safe `400`/`401`/`429`/timeout/network errors, GPT-5.6 Luna default, Responses API, `reasoning: none`, `store: false`, Structured Outputs, sanitized placeholder hostname, and narrow-layout behavior.
+No `npm install`, build, bundler, or package manager is required. Chrome loads `extension/` directly. Node 22 is used by CI.
 
 ```bash
 node --check extension/content.js
 node --check extension/options.js
+node --check extension/background.js
 node tests/regression.test.js
 ```
 
-Checks do not provide full browser end-to-end coverage. Shopkit integration still requires manual browser validation.
+The Node checks do not provide full browser coverage. Manually verify extension loading, Options save/delete, OpenAI generation, TinyMCE, Chosen, tags, media search, Apply, and final manual save after Shopkit UI changes.
 
-## Tech Stack
+## Repository Layout
 
-- JavaScript and CSS
-- Chrome Extension Manifest V3
-- Chrome Storage API
-- OpenAI Responses API
-- GPT-5.6 Luna
-- JSON Schema Structured Outputs
-- Shadow DOM, TinyMCE, Chosen.js, Shopkit DOM
-- Node `assert` regression tests
+- `extension/manifest.json`: extension match, permissions, service worker, Options page, icons.
+- `extension/content.js`: Shopkit discovery, Portuguese panel, prompt, validation, preview, and Apply.
+- `extension/background.js`: OpenAI request, API-key use, timeout, and response transport.
+- `extension/options.html` / `options.js`: local API configuration.
+- `docs/SHOPKIT_INTEGRATION.md`: DOM integration contract and manual validation boundary.
+- `SECURITY.md`: API-key, data-flow, and vulnerability-reporting policy.
+- `tests/regression.test.js`: dependency-free regression checks.
 
-## Installation
+## Status, Support, and Licence
 
-1. Clone repository.
-2. Replace exact placeholder hostname in `extension/manifest.json` and `extension/content.js` runtime guard.
-3. Open `chrome://extensions/`, enable Developer Mode, then load unpacked `extension/`.
-4. Open Options and enter OpenAI API key.
+This is an experimental portfolio and educational repository, not an official Shopkit product. Version `1.0.0` is a reviewed source snapshot; maintenance is best effort and unattended production use is not supported. Shopkit selectors and widgets may change.
 
-## Configuration
-
-| Setting | Description | Default |
-|---|---|---|
-| `apiKey` | User-supplied OpenAI API key | Required |
-| `model` | OpenAI model name | `gpt-5.6-luna` |
-
-Public code targets `https://example-store.shopk.it`. Replace exact hostname in `extension/manifest.json` and `extension/content.js` runtime guard. Keep HTTPS and exact matching; do not use `<all_urls>` or `*://*/*`.
-
-## Limitations
-
-- Shopkit DOM selectors may change.
-- One configured hostname at a time.
-- API key lives browser-side in local extension storage.
-- Generated content requires human review.
-- No automatic product publishing, backend, or batch system.
-- Media selection uses existing Shopkit media workflow.
-- Not official Shopkit product.
-
-## Project Status
-
-Feature-complete portfolio version.
-
-Current version is intentionally frozen around core Generate -> Preview -> Review -> Apply workflow. Future experiments, including improved media discovery, are deferred rather than expanding current scope.
-
-## Author
-
-Rafael Lopes
-GitHub: [@Woddy23](https://github.com/Woddy23)
-Portfolio: https://rafadesigns.vercel.app/developer
-
-This repository is published for portfolio and educational review. No open-source licence is currently granted.
+- Installation and reproducible integration issues: [GitHub Issues](https://github.com/Woddy23/shopkit-product-builder/issues).
+- Security issues: follow [`SECURITY.md`](SECURITY.md) and do not use a public issue for secrets or exploit details.
+- No open-source licence is granted. Public visibility does not grant permission to redistribute or modify this code.

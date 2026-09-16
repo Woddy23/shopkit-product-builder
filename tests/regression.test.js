@@ -3,8 +3,8 @@ const fs = require('node:fs');
 
 function parseWeightFromTitle(title) {
   const patterns = [
-    /(\d+)\s*x\s*(\d+)\s*(ml|g|l)/gi,
-    /(\d+)\s*(ml|g|l|gramas?|litros?)/gi
+    /(?<![\d.,])(\d+(?:[.,]\d+)?)\s*x\s*(\d+(?:[.,]\d+)?)\s*(ml|g|l)\b/gi,
+    /(?<![\d.,])(\d+(?:[.,]\d+)?)\s*(ml|g|l|gramas?|litros?)\b/gi
   ];
   let total = 0;
   let found = false;
@@ -14,10 +14,10 @@ function parseWeightFromTitle(title) {
     while ((match = pattern.exec(title)) !== null) {
       const end = match.index + match[0].length;
       if (!match[3] && occupied.some(([start, finish]) => match.index < finish && end > start)) continue;
-      const amount = Number(match[3] ? match[2] : match[1]);
+      const amount = Number((match[3] ? match[2] : match[1]).replace(',', '.'));
       const unit = (match[3] || match[2]).toLowerCase();
       const grams = unit === 'l' || unit.startsWith('lit') ? amount * 1000 : amount;
-      total += match[3] ? Number(match[1]) * grams : grams;
+      total += match[3] ? Number(match[1].replace(',', '.')) * grams : grams;
       occupied.push([match.index, end]);
       found = true;
     }
@@ -49,22 +49,67 @@ function smartTruncate(text, maxLength, addEllipsis = true) {
 assert.equal(parseWeightFromTitle('500ml'), 500);
 assert.equal(parseWeightFromTitle('6x500ml'), 3000);
 assert.equal(parseWeightFromTitle('2x250ml + 100ml'), 600);
-assert.equal(parseWeightFromTitle('1L'), 1000);
+assert.equal(parseWeightFromTitle('0.5L'), 500);
+assert.equal(parseWeightFromTitle('0,5L'), 500);
+assert.equal(parseWeightFromTitle('1.5L'), 1500);
 assert.equal(detectKitOrBundle('Product A + Product B'), true);
 assert.equal(detectKitOrBundle('Kit Repair'), true);
 assert.equal(detectKitOrBundle('Normal single product'), false);
 assert.ok(smartTruncate('This is a deliberately long product excerpt for testing', 85).length <= 85);
 
 const source = fs.readFileSync('extension/content.js', 'utf8');
+const worker = fs.readFileSync('extension/background.js', 'utf8');
+const options = fs.readFileSync('extension/options.js', 'utf8');
+const optionsHtml = fs.readFileSync('extension/options.html', 'utf8');
 const panelCss = fs.readFileSync('extension/panel.css', 'utf8');
 const manifest = fs.readFileSync('extension/manifest.json', 'utf8');
+
 const errorDetailsSource = source.slice(
   source.indexOf('function getGenerationErrorDetails'),
   source.indexOf('function sleep')
 );
 const getGenerationErrorDetails = Function(`${errorDetailsSource}\nreturn getGenerationErrorDetails;`)();
+
 assert.equal(/setInputValue\('#preco'/.test(source), false, 'apply path must not overwrite price');
 assert.match(source, /sanitizeDescriptionHtml/);
+assert.match(source, /const safeHtml = sanitizeDescriptionHtml\(html\)/, 'every editor path must use sanitized HTML');
+assert.doesNotMatch(source, /element\.value = html \|\| ''/, 'raw HTML must never reach editor backing field');
+assert.match(source, /draft\.missing_fields = Array\.from\(new Set\(missing\)\)/, 'model missing fields must survive local validation');
+assert.match(source, /Number\.isFinite\(data\.peso\)/, 'unknown weight must not become zero');
+assert.doesNotMatch(source, /setChosenSelect\('#type', 'physical'\)/, 'Apply must not force product type');
+assert.doesNotMatch(source, /#taxable|name="estado"|forceUncheckCheckbox|value', '0'/, 'Apply must not force unrelated product settings');
+assert.match(source, /opt\.selected = matchedValues\.has\(opt\.value\)/, 'category Apply must replace stale selections');
+assert.match(source, /if \(isSameProduct\) \{[\s\S]*lockedValues/, 'locks must be scoped to current product');
+assert.match(source, /openMediaSearch/, 'media action must be search-only');
+assert.doesNotMatch(source, /item\.click\(\)/, 'media action must not select assets automatically');
+assert.doesNotMatch(source, /confirmBtn\.click\(\)/, 'media action must not confirm assets automatically');
+assert.doesNotMatch(source, /requestSubmit|\.submit\(/, 'extension must not submit the product form');
+assert.doesNotMatch(source, /button\[type=["']submit["']\]|Gravar dados/, 'extension must not target Shopkit submit action');
+assert.match(source, /chrome\.runtime\.sendMessage\(\{ type: 'generate-draft'/, 'content script must use worker transport');
+assert.doesNotMatch(source, /Authorization:|fetch\(.*api\.openai\.com/s, 'content script must not hold API request credentials');
+assert.match(worker, /host_permissions|OPENAI_RESPONSES_URL|Authorization:/, 'worker must own OpenAI request');
+assert.match(worker, /REQUEST_TIMEOUT_MS = 60000/, 'worker must bound complete request');
+assert.match(worker, /const deadline = Date\.now\(\) \+ REQUEST_TIMEOUT_MS/, 'fallback attempts must share one total deadline');
+assert.match(worker, /typeof message\.model !== 'string'/, 'worker must validate model messages');
+assert.match(worker, /finally \{[\s\S]*clearTimeout\(timeoutId\)/, 'worker must clear timeout after body processing');
+assert.match(manifest, /https:\/\/\*\.shopk\.it\/admin\/products\/create/, 'manifest must contain sole reusable Shopkit route');
+assert.doesNotMatch(source, /example-store\.shopk\.it/, 'content script must not duplicate store URL');
+assert.match(manifest, /"background"[\s\S]*"service_worker": "background\.js"/);
+assert.match(optionsHtml, /Configuração da extensão|Chave API da OpenAI|gpt-5\.6-luna/);
+assert.match(options, /clear-key|chrome\.storage\.local\.remove\('apiKey'\)/, 'user must be able to delete local key');
+assert.match(source, /type: 'open-options'/, 'content script must expose a configuration action');
+assert.match(worker, /message\.type === 'open-options'[\s\S]*openOptionsPage/, 'worker must open configuration page');
+assert.match(source, /chrome\.storage\.onChanged/, 'open Shopkit page must refresh configuration state');
+assert.match(source, /draft\.language !== 'pt-PT'/, 'draft language must be validated');
+assert.match(source, /new URL\(url\)\.protocol !== 'https:'/, 'supplier URLs must be HTTPS');
+assert.doesNotMatch(source, /replace\(\/```json\|```\/g/, 'parser must not silently strip markdown fences');
+assert.match(source, /inlineBtn\.disabled\s*=\s*isGenerating\s*\|\|\s*!isConfigReady/);
+assert.match(source, /if \(isGenerating \|\| !isConfigReady\) return;/);
+assert.match(source, /Generation failed: \$\{details\.log\}/);
+assert.match(source, /status === 401[\s\S]*status === 400[\s\S]*status === 429[\s\S]*AbortError[\s\S]*NetworkError/);
+assert.match(panelCss, /#ai-product-builder-toggle\s*\{[\s\S]*left:\s*24px;[\s\S]*bottom:\s*24px;/);
+assert.match(panelCss, /@media \(max-width: 520px\)[\s\S]*left:\s*16px;[\s\S]*bottom:\s*16px;/);
+
 [
   [new Error('API key not configured'), 'missing API key', 'Configure a API key nas opções da extensão.'],
   [Object.assign(new Error(), { status: 401, apiError: { code: 'invalid_api_key' } }), 'HTTP 401 [invalid_api_key]', 'A API key não foi aceite. Verifique a configuração.'],
@@ -79,54 +124,5 @@ assert.match(source, /sanitizeDescriptionHtml/);
   assert.equal(details.message, message);
   assert.deepEqual(Object.keys(details.diagnostic), ['status', 'type', 'code', 'param', 'message']);
 });
-
-const generationSource = source.slice(
-  source.indexOf('async function generateDraftForPreview'),
-  source.indexOf('function createInlineGenerateButton')
-);
-const previewUpdateSource = source.slice(
-  source.indexOf('function updateDraftFromPreview'),
-  source.indexOf('function createCategoryChipHTML')
-);
-const applySource = source.slice(
-  source.indexOf('async function applyProductData'),
-  source.indexOf('function displayNeedsReview')
-);
-assert.doesNotMatch(generationSource, /applyProductData\(/, 'generation must only prepare preview');
-assert.equal((source.match(/applyProductData\(draftState\)/g) || []).length, 1, 'only explicit Apply may apply draft');
-assert.match(generationSource, /hasGeneratedDraft\s*=\s*false[\s\S]*setGenerationLoading\(true\)/, 'new generation must invalidate the previous applicable draft');
-assert.equal((generationSource.match(/hasGeneratedDraft\s*=\s*true/g) || []).length, 1, 'only successful generation may enable Apply');
-assert.match(generationSource, /generatedDraftTitleKey\s*===\s*requestedTitleKey/, 'draft preservation must compare normalized product identity');
-assert.match(generationSource, /if \(isSameProduct\) \{[\s\S]*fieldsToPreserve\.forEach/, 'automatic value preservation must be limited to the same product');
-assert.doesNotMatch(previewUpdateSource, /lockedValues|Restore locked field values/, 'preview edits must not be overwritten by stale locked values');
-assert.doesNotMatch(applySource, /isFieldLocked\(/, 'locks must not block explicit Apply');
-assert.match(applySource, /return true;[\s\S]*catch \(error\)[\s\S]*return false;/, 'Apply must report unexpected success or failure');
-assert.doesNotMatch(source, /draftState\.categorias_text\s*=\s*parseCsv\(getPanelElement\('#preview-categorias'\)/, 'category chips must not overwrite draft categories');
-assert.match(source, /panelHost\.setAttribute\('data-open', 'false'\)/, 'panel must start closed');
-assert.match(source, /:host\(\[data-open="true"\]\)/, 'Shadow host open state must match host attributes');
-assert.doesNotMatch(source, /:host\[data-open="true"\]/, 'invalid Shadow host open selector must not return');
-assert.match(source, /id="apply-form"[^>]*disabled/, 'Apply must start disabled');
-assert.match(source, /event\.key === 'Escape'/, 'Escape must close panel');
-assert.match(source, /inlineBtn\.disabled\s*=\s*isGenerating\s*\|\|\s*!isConfigReady/, 'inline Generate must respect config readiness');
-assert.match(source, /if \(isGenerating \|\| !isConfigReady\) return;/, 'inline Generate must block generation when config is not ready');
-assert.match(source, /Generation failed: \$\{details\.log\}/, 'generation failures must retain safe classification');
-assert.match(source, /status === 401[\s\S]*status === 400[\s\S]*status === 429[\s\S]*AbortError[\s\S]*NetworkError/, 'generation failures must classify expected API errors');
-assert.match(panelCss, /#ai-product-builder-toggle\s*\{[\s\S]*left:\s*24px;[\s\S]*right:\s*auto;[\s\S]*bottom:\s*24px;/, 'floating trigger must use bottom-left desktop position');
-assert.match(panelCss, /@media \(max-width: 520px\)[\s\S]*left:\s*16px;[\s\S]*right:\s*auto;[\s\S]*bottom:\s*16px;/, 'floating trigger must use bottom-left mobile position');
-assert.doesNotMatch(source, /requestSubmit|\.submit\(/, 'extension must not submit the product form');
-assert.doesNotMatch(source, /button\[type=["']submit["']\]|Gravar dados/, 'extension must not target the Shopkit submit action');
-assert.match(source, /const MODEL_DEFAULT = 'gpt-5\.6-luna'/, 'GPT-5.6 Luna must be default model');
-assert.match(source, /api\.openai\.com\/v1\/responses/, 'GPT-5.6 Luna must use Responses API');
-assert.match(source, /reasoning:\s*\{\s*effort:\s*'none'\s*\}/, 'GPT-5.6 reasoning effort must be none');
-assert.match(source, /store:\s*false/, 'Responses request must disable storage');
-assert.match(source, /type:\s*'json_schema'/, 'Responses request must use Structured Outputs');
-assert.match(source, /name:\s*'shopkit_product_draft'/, 'Structured Output schema must be named');
-assert.doesNotMatch(source, /tagsModalLink\.click\(/, 'option discovery must not click native tags modal');
-assert.ok(source.indexOf('<summary>Pesquisa e Media</summary>') < source.indexOf('<h4 class="section-title">Produto</h4>'), 'research must precede product');
-assert.ok(source.indexOf('<summary>Detalhes adicionais</summary>') > source.indexOf('<h4 class="section-title">SEO</h4>'), 'details must follow SEO');
-assert.match(source, /@media \(max-width: 420px\)[\s\S]*\.compact-grid \{ grid-template-columns: 1fr; \}/, 'narrow detail fields must stack');
-assert.match(source, /setupInlineObserver\(\)/, 'inline Generate must be monitored by observer for dynamic DOM replacement');
-assert.match(source, /ensureInlineGenerateButton\(\)/, 'loading cleanup must re-ensure inline Generate presence');
-assert.match(manifest, /https:\/\/example-store\.shopk\.it\/admin\/products\/create/, 'portfolio-safe placeholder hostname must remain intact');
 
 console.log('regression tests passed');

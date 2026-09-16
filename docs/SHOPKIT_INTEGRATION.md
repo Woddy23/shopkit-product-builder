@@ -1,33 +1,70 @@
-# Shopkit Integration
+# Shopkit Integration Contract
 
-## Overview
+## Supported Page
 
-ShopKit Product Builder integrates with one configured Shopkit product-create page through its DOM. It has no Shopkit API access and does not automate final product save.
+The extension injects only on HTTPS URLs matching:
+
+```text
+https://*.shopk.it/admin/products/create
+```
+
+The content script uses the page DOM. It does not use a Shopkit API, submit the form, click the final save action, or publish products.
 
 ## Read-Only Discovery
 
-Before Apply, the extension reads native select options for categories and brands. Available tag labels are read only when already present in the page DOM. Discovery must not open native modals or change product fields.
+Before generation, the extension reads:
 
-## Apply Behavior
+- Product title from `#produto_titulo`.
+- Brand options from `#marca` or compatible select names/IDs.
+- Category options from `#categorias` or compatible select names/IDs.
+- Existing tag labels when already present in the page DOM.
 
-Apply runs only after user review. It writes supported reviewed values to native product fields, dispatches required events, and reports unmatched values for manual handling. Price is excluded. Apply never submits form or triggers `Gravar dados`.
+Discovery must not open native modals or change product fields.
 
-## TinyMCE
+## Generate
 
-Description writes use TinyMCE API when available, then synchronize backing textarea and events. Fallback behavior writes sanitized HTML to the editor DOM or textarea.
+Generate sends title and discovered option labels to the extension service worker. The service worker calls OpenAI using the locally stored key. The content script validates the returned draft, matches brand/category values against available Shopkit options, and displays the result in a Shadow DOM panel.
 
-## Chosen.js
+Generate does not write native Shopkit fields.
 
-Category and brand values are written to underlying native selects, followed by native change events and Chosen.js update events. Categories remain backed by option values, not preview text.
+## Apply
 
-## Tags
+Apply requires explicit user action after preview review. It can write:
 
-Tags use Shopkit page controls during explicit Apply. Pre-Apply discovery remains read-only and never opens native tag modal.
+- Title.
+- Sanitized description HTML.
+- Excerpt.
+- Matched brand.
+- Matched categories.
+- Tags.
+- Known weight.
+- Reference and barcode when present.
+- SEO title, description, and tags.
+- Handle.
 
-## Media Modal
+Apply intentionally does not write price, tax setting, product status, featured/new/promotion flags, media selections, or the final save action. Unknown values remain untouched and appear as review items.
 
-Media stays in Shopkit existing workflow. User opens media modal, uploads or selects library items, confirms selection, then manually saves product. Extension does not upload media or select it automatically.
+Categories are replaced with the matched reviewed set rather than added to stale selections. Existing page widgets may still require manual visual verification.
 
-## Integration Limits
+## Rich Text and Widgets
 
-Selectors and widget behavior are Shopkit-page-specific and may change. Manual browser validation is required after Shopkit UI updates.
+TinyMCE, Chosen, tags, and Shopkit selectors are page-owned integrations. The extension uses native values/events and optional widget hooks where available. If Shopkit changes widget markup, the native field and final saved form must be checked manually.
+
+## Media
+
+The assistant only opens Shopkit media search and pre-fills one AI-suggested search term. It does not click media items, upload files, or confirm selection. User selects assets and confirms them in Shopkit.
+
+## Manual Validation Checklist
+
+After a Shopkit UI update, test with dummy data:
+
+1. Assistant appears on product-create route only.
+2. Generation stays in preview.
+3. Description reaches the correct editor and is sanitized.
+4. Brand and categories match native options.
+5. Tags reach native input and widget.
+6. Unknown values remain untouched.
+7. Price/status/tax/flags remain unchanged.
+8. Media search opens without automatic selection.
+9. Apply reports missing or failed fields.
+10. Final Shopkit save remains a user action.
