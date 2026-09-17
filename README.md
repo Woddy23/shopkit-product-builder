@@ -4,17 +4,13 @@ Create a Portuguese product draft from a Shopkit product title. Review it, apply
 
 > Experimental Chrome extension. Test with a non-production product first. It never saves or publishes products automatically.
 
-![Shopkit Product Builder assistant inside Shopkit](Demo-shopkit.jpg)
+![Shopkit Product Builder assistant inside Shopkit](Demo-shopkit.png)
 
 *Portuguese assistant panel shown beside the Shopkit product form. Product data in screenshot is for demonstration.*
 
 ## Download
 
 [Download Shopkit Product Builder v1.0.0](https://github.com/Woddy23/shopkit-product-builder/releases/download/v1.0.0/shopkit-product-builder-v1.0.0.zip)
-
-## Demo
-
-Screenshot included above. Walkthrough video coming soon.
 
 ## Install
 
